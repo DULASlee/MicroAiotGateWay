@@ -51,7 +51,9 @@ builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =
 // ---- 6. 复用 Shared OTel 基础设施 + Gateway 独有扩展 ----
 builder.Services
     .AddIoTHunterOpenTelemetry(builder.Configuration, "IoTGateway")
-    .WithTracing(tracing => tracing.AddAspNetCoreInstrumentation())
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation()
+        .AddSource("IoTGateway.Kafka"))
     .WithMetrics(metrics => metrics
         .AddMeter("IoTGateway")
         .AddAspNetCoreInstrumentation()

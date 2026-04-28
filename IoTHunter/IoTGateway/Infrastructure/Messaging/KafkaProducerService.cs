@@ -58,7 +58,7 @@ public sealed class KafkaProducerService : IDisposable
 
         // ADR-004: 在 Kafka Header 注入 W3C Trace Context
         Propagator.Inject(
-            new PropagationContext(activity?.Context ?? default, Baggage.Current),
+            new PropagationContext(activity?.Context ?? parentActivity?.Context ?? default, Baggage.Current),
             message.Headers,
             (headers, key, value) => headers.Add(key, Encoding.UTF8.GetBytes(value)));
 
