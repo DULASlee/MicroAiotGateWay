@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="BackendProcessor/BackendProcessor.csproj" />
+  <Project Path="DeviceSimulator/DeviceSimulator.csproj" />
+  <Project Path="IoTGateway/IoTGateway.csproj" />
+  <Project Path="IoTHunter.Shared/IoTHunter.Shared.csproj" />
+</Solution>

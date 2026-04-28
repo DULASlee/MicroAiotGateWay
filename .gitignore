@@ -1,0 +1,68 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+## VS Code / Cursor
+.vscode/
+.cursor/
+.specstory/
+
+## Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+## NuGet
+*.nupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nuget.props
+*.nuget.targets
+
+## Visual Studio
+.idea/
+.vs/
+*.sln.docstates
+*.vssscc
+.builds
+
+## Rider
+.idea/
+*.sln.iml
+
+## Test results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+
+## Azure
+*.azurepubxml
+*.pubxml
+*.publishproj
+
+## OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+## Generated docs / AI assistants
+.qoder/
+.claude/
+
+## Environment
+.env
+.env.*
+*.env.local
