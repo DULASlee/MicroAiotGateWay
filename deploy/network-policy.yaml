@@ -1,0 +1,160 @@
+# NetworkPolicy —— 零信任最小权限（需 Cilium 或其他支持 NetworkPolicy 的 CNI）
+# 默认拒绝 + 显式 allow 规则
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-to-kafka
+  namespace: iothunter
+spec:
+  podSelector:
+    matchLabels:
+      app: iot-gateway
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kafka
+      ports:
+        - protocol: TCP
+          port: 9092
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-to-mosquitto
+  namespace: iothunter
+spec:
+  podSelector:
+    matchLabels:
+      app: iot-gateway
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: mosquitto
+      ports:
+        - protocol: TCP
+          port: 1883
+        - protocol: TCP
+          port: 8083
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-processor-to-kafka
+  namespace: iothunter
+spec:
+  podSelector:
+    matchLabels:
+      app: backend-processor
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kafka
+      ports:
+        - protocol: TCP
+          port: 9092
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-processor-to-pg
+  namespace: iothunter
+spec:
+  podSelector:
+    matchLabels:
+      app: backend-processor
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-processor-to-redis
+  namespace: iothunter
+spec:
+  podSelector:
+    matchLabels:
+      app: backend-processor
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-sim-to-gateway
+  namespace: iothunter
+spec:
+  podSelector:
+    matchLabels:
+      app: device-simulator
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: iot-gateway
+      ports:
+        - protocol: TCP
+          port: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-sim-to-mosquitto
+  namespace: iothunter
+spec:
+  podSelector:
+    matchLabels:
+      app: device-simulator
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: mosquitto
+      ports:
+        - protocol: TCP
+          port: 1883
+        - protocol: TCP
+          port: 8083
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-other
+  namespace: iothunter
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress: []

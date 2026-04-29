@@ -2,52 +2,59 @@ using DeviceSimulator;
 using DeviceSimulator.Infrastructure.Metrics;
 using DeviceSimulator.Infrastructure.Options;
 using IoTHunter.Shared.Infrastructure;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
+using OpenTelemetry.Metrics;
 using Serilog;
 
-var host = Host.CreateDefaultBuilder(args)
-    .UseSerilog((context, services, configuration) =>
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Host.UseSerilog((context, services, configuration) =>
+{
+    LoggingDefaults.ConfigureBaseLogger(configuration);
+});
+
+// 标准 Options 绑定
+builder.Services.Configure<SimulatorOptions>(
+    builder.Configuration.GetSection("Simulator"));
+
+// CLI 参数覆盖（PostConfigure 在 Configure 之后运行）
+builder.Services.PostConfigure<SimulatorOptions>(opts =>
+{
+    var cmd = (string?)null;
+    cmd = args.FirstOrDefault(a => a.StartsWith("--protocol="))?.Split('=')[1];
+    if (cmd is not null) opts.Protocol = cmd;
+    if (int.TryParse(args.FirstOrDefault(a => a.StartsWith("--devices="))?.Split('=')[1], out var dc)) opts.DeviceCount = dc;
+    if (int.TryParse(args.FirstOrDefault(a => a.StartsWith("--interval="))?.Split('=')[1], out var iv)) opts.IntervalMs = iv;
+    if (int.TryParse(args.FirstOrDefault(a => a.StartsWith("--concurrency="))?.Split('=')[1], out var cc)) opts.Concurrency = cc;
+    if (int.TryParse(args.FirstOrDefault(a => a.StartsWith("--duration="))?.Split('=')[1], out var ds)) opts.DurationSeconds = ds;
+});
+
+// 命名 HttpClient：ProxyUrl 非空时走边缘代理，否则直连网关
+var proxyUrl = builder.Configuration["Simulator:ProxyUrl"];
+var httpBase = builder.Configuration["Simulator:GatewayHttpBase"]
+               ?? "http://localhost:5080";
+var effectiveBase = string.IsNullOrWhiteSpace(proxyUrl) ? httpBase : proxyUrl;
+builder.Services.AddHttpClient("Gateway", client =>
+{
+    client.BaseAddress = new Uri(effectiveBase);
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
+
+builder.Services.AddSingleton<SimulatorMetrics>();
+
+builder.Services.AddIoTHunterOpenTelemetry(builder.Configuration, "DeviceSimulator")
+    .WithMetrics(metrics =>
     {
-        LoggingDefaults.ConfigureBaseLogger(configuration);
-    })
-    .ConfigureServices((context, services) =>
-    {
-        var opts = new SimulatorOptions();
-        var cfg = context.Configuration;
-        opts.Protocol = cfg["Protocol"] ?? opts.Protocol;
-        opts.DeviceCount = int.TryParse(cfg["DeviceCount"], out var dc) ? dc : opts.DeviceCount;
-        opts.IntervalMs = int.TryParse(cfg["IntervalMs"], out var iv) ? iv : opts.IntervalMs;
-        opts.Concurrency = int.TryParse(cfg["Concurrency"], out var cc) ? cc : opts.Concurrency;
-        opts.DurationSeconds = int.TryParse(cfg["DurationSeconds"], out var ds) ? ds : opts.DurationSeconds;
-        opts.GatewayHttpBase = cfg["GatewayHttpBase"] ?? opts.GatewayHttpBase;
-        opts.MqttWebSocketUrl = cfg["MqttWebSocketUrl"] ?? opts.MqttWebSocketUrl;
+        metrics
+            .AddMeter("DeviceSimulator")
+            .AddPrometheusExporter();
+    });
 
-        // CLI overrides
-        var cmdProtocol = args.FirstOrDefault(a => a.StartsWith("--protocol="))?.Split('=')[1];
-        if (cmdProtocol is not null) opts.Protocol = cmdProtocol;
+builder.Services.AddHostedService<SimulatorWorker>();
 
-        var cmdDevices = args.FirstOrDefault(a => a.StartsWith("--devices="))?.Split('=')[1];
-        if (int.TryParse(cmdDevices, out var devices)) opts.DeviceCount = devices;
+var app = builder.Build();
 
-        var cmdInterval = args.FirstOrDefault(a => a.StartsWith("--interval="))?.Split('=')[1];
-        if (int.TryParse(cmdInterval, out var interval)) opts.IntervalMs = interval;
+app.UseRouting();
+app.MapPrometheusScrapingEndpoint();
+app.MapGet("/", () => "DeviceSimulator OK");
 
-        var cmdConcurrency = args.FirstOrDefault(a => a.StartsWith("--concurrency="))?.Split('=')[1];
-        if (int.TryParse(cmdConcurrency, out var concurrency)) opts.Concurrency = concurrency;
-
-        var cmdDuration = args.FirstOrDefault(a => a.StartsWith("--duration="))?.Split('=')[1];
-        if (int.TryParse(cmdDuration, out var duration)) opts.DurationSeconds = duration;
-
-        services.AddSingleton(opts);
-        services.AddSingleton<SimulatorMetrics>();
-        services.AddHttpClient();
-
-        services.AddIoTHunterOpenTelemetry(context.Configuration, "DeviceSimulator")
-            .WithMetrics(metrics => metrics.AddMeter("DeviceSimulator"));
-
-        services.AddHostedService<SimulatorWorker>();
-    })
-    .Build();
-
-await host.RunAsync();
+await app.RunAsync();

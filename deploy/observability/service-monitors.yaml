@@ -1,0 +1,55 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: iot-gateway
+  namespace: iothunter
+spec:
+  selector:
+    matchLabels:
+      app: iot-gateway
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backend-processor
+  namespace: iothunter
+spec:
+  selector:
+    matchLabels:
+      app: backend-processor
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: device-simulator
+  namespace: iothunter
+spec:
+  selector:
+    matchLabels:
+      app: device-simulator
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: device-simulator-mqtt
+  namespace: iothunter
+spec:
+  selector:
+    matchLabels:
+      app: device-simulator-mqtt
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics

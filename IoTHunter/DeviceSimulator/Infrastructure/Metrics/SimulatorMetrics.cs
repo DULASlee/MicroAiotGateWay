@@ -17,9 +17,27 @@ internal sealed class SimulatorMetrics : IDisposable
         _ackLatencyMs = _meter.CreateHistogram<double>("simulator_ack_latency_ms", "ms", "Ack latency");
     }
 
-    public void RecordSent(string protocol) => _sentTotal.Add(1, KeyValuePair.Create<string, object?>("protocol", protocol));
-    public void RecordFailed(string protocol) => _failedTotal.Add(1, KeyValuePair.Create<string, object?>("protocol", protocol));
-    public void RecordLatency(string protocol, long ms) => _ackLatencyMs.Record(ms, KeyValuePair.Create<string, object?>("protocol", protocol));
+    public void RecordSent(string protocol, string reliability, string topic)
+    {
+        _sentTotal.Add(1,
+            new KeyValuePair<string, object?>("protocol", protocol),
+            new KeyValuePair<string, object?>("reliability", reliability),
+            new KeyValuePair<string, object?>("topic", topic));
+    }
+
+    public void RecordFailed(string protocol, string reliability, string status)
+    {
+        _failedTotal.Add(1,
+            new KeyValuePair<string, object?>("protocol", protocol),
+            new KeyValuePair<string, object?>("reliability", reliability),
+            new KeyValuePair<string, object?>("status", status));
+    }
+
+    public void RecordLatency(string protocol, long ms)
+    {
+        _ackLatencyMs.Record(ms,
+            new KeyValuePair<string, object?>("protocol", protocol));
+    }
 
     public void Dispose() => _meter.Dispose();
 }

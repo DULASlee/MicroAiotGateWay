@@ -1,0 +1,26 @@
+# 边缘代理监控占位说明：
+# 真实设备接入后，需在边缘代理侧暴露 /metrics，
+# 并通过 ServiceMonitor 纳入 Prometheus，监控公网入口的 QPS、地域延迟分布等。
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+grafana:
+  enabled: true
+  adminPassword: "IoTHunter2026!"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  additionalDataSources:
+    - name: Jaeger
+      type: jaeger
+      url: http://jaeger-query.iothunter.svc:16686
+      access: proxy

@@ -1,0 +1,13 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: edge-gateway-proxy
+  namespace: iothunter
+spec:
+  selector:
+    matchLabels:
+      app: edge-proxy
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics

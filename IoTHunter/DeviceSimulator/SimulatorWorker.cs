@@ -1,32 +1,33 @@
 using System.Diagnostics;
-using System.Text;
-using System.Text.Json;
 using System.Threading.Channels;
+using DeviceSimulator.Infrastructure;
 using DeviceSimulator.Infrastructure.Metrics;
 using DeviceSimulator.Infrastructure.Options;
-using IoTHunter.Shared.Infrastructure;
+using IoTHunter.Shared.Domain;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using MQTTnet;
-using MQTTnet.Protocol;
+using Microsoft.Extensions.Options;
 
 namespace DeviceSimulator;
 
 internal sealed class SimulatorWorker : BackgroundService
 {
     private readonly SimulatorOptions _opts;
-    private readonly IHttpClientFactory _http;
+    private readonly IHttpClientFactory _httpFactory;
+    private readonly ILoggerFactory _loggerFactory;
     private readonly SimulatorMetrics _metrics;
     private readonly ILogger<SimulatorWorker> _logger;
 
     public SimulatorWorker(
-        SimulatorOptions opts,
-        IHttpClientFactory http,
+        IOptions<SimulatorOptions> opts,
+        IHttpClientFactory httpFactory,
+        ILoggerFactory loggerFactory,
         SimulatorMetrics metrics,
         ILogger<SimulatorWorker> logger)
     {
-        _opts = opts;
-        _http = http;
+        _opts = opts.Value;
+        _httpFactory = httpFactory;
+        _loggerFactory = loggerFactory;
         _metrics = metrics;
         _logger = logger;
     }
@@ -34,15 +35,15 @@ internal sealed class SimulatorWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
         _logger.LogInformation(
-            "Simulator starting: Protocol={Protocol} Devices={Count} Interval={IntervalMs}ms Concurrency={Concurrency}",
-            _opts.Protocol, _opts.DeviceCount, _opts.IntervalMs, _opts.Concurrency);
+            "Simulator starting: Protocol={Protocol} Devices={Count} Interval={IntervalMs}ms Concurrency={Concurrency} CriticalRatio={CriticalRatio}",
+            _opts.Protocol, _opts.DeviceCount, _opts.IntervalMs,
+            _opts.Concurrency, _opts.CriticalEventRatio);
 
         var channel = Channel.CreateBounded<SendTask>(new BoundedChannelOptions(_opts.Concurrency * 500)
         {
             FullMode = BoundedChannelFullMode.Wait
         });
 
-        // Start consumer Tasks
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var consumers = Enumerable.Range(0, _opts.Concurrency)
             .Select(_ => ConsumeLoop(channel.Reader, cts.Token))
@@ -53,6 +54,7 @@ internal sealed class SimulatorWorker : BackgroundService
             ? DateTime.UtcNow.AddSeconds(_opts.DurationSeconds)
             : (DateTime?)null;
 
+        var rng = new Random();
         var seq = 0L;
         try
         {
@@ -60,14 +62,20 @@ internal sealed class SimulatorWorker : BackgroundService
             {
                 for (var d = 0; d < _opts.DeviceCount; d++)
                 {
-                    var deviceId = $"sim-{d:D4}";
+                    var deviceId = $"dev-{d:D3}";
                     seq++;
-                    var ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+                    // 4.7: 按 CriticalEventRatio 决定可靠性级别
+                    var isCritical = rng.NextDouble() < _opts.CriticalEventRatio;
+                    var reliability = isCritical ? ReliabilityLevel.Critical : ReliabilityLevel.BestEffort;
 
                     var task = new SendTask(
-                        deviceId, "simulated_metric",
-                        new { value = Random.Shared.NextDouble() * 100, seq },
-                        ts, seq);
+                        deviceId,
+                        isCritical ? "critical_event" : "simulated_metric",
+                        new { value = rng.NextDouble() * 100, seq },
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                        seq,
+                        reliability);
 
                     await channel.Writer.WriteAsync(task, ct);
                 }
@@ -81,6 +89,7 @@ internal sealed class SimulatorWorker : BackgroundService
         finally
         {
             channel.Writer.Complete();
+            _logger.LogInformation("Channel writer completed, waiting for consumers to drain...");
         }
 
         await Task.WhenAll(consumers);
@@ -97,102 +106,111 @@ internal sealed class SimulatorWorker : BackgroundService
 
     private async Task ConsumeHttp(ChannelReader<SendTask> reader, CancellationToken ct)
     {
-        var client = _http.CreateClient();
-        client.BaseAddress = new Uri(_opts.GatewayHttpBase);
+        var generator = new TelemetryGenerator();
+        var sender = new HttpTelemetrySender(
+            _httpFactory, _loggerFactory.CreateLogger<HttpTelemetrySender>());
 
         await foreach (var task in reader.ReadAllAsync(ct))
         {
             var sw = Stopwatch.StartNew();
-            try
+            var envelope = generator.Generate(task.DeviceId, task.Reliability, task.Sequence);
+            var result = await SendWithRetryAsync(
+                envelope, (e, c) => sender.SendAsync(e, c), ct);
+            sw.Stop();
+
+            var rel = task.Reliability == ReliabilityLevel.Critical ? "critical" : "best_effort";
+            var topic = task.Reliability == ReliabilityLevel.Critical ? "event.critical" : "telemetry.raw";
+
+            if (result == SendResult.Success)
             {
-                var payload = new
-                {
-                    deviceId = task.DeviceId,
-                    metricType = task.MetricType,
-                    payload = task.Payload,
-                    timestamp = task.Timestamp,
-                    sequence = task.Sequence
-                };
-                var json = JsonSerializer.Serialize(payload, SerializerSetup.TightOptions);
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-                var resp = await client.PostAsync("/api/v1/telemetry", content, ct);
-                sw.Stop();
-
-                if (resp.IsSuccessStatusCode)
-                {
-                    _metrics.RecordSent("http");
-                    _metrics.RecordLatency("http", sw.ElapsedMilliseconds);
-                }
-                else
-                {
-                    _metrics.RecordFailed("http");
-                    _logger.LogWarning("HTTP {DeviceId} seq={Seq} status={Status}",
-                        task.DeviceId, task.Sequence, (int)resp.StatusCode);
-                }
+                _metrics.RecordSent("http", rel, topic);
+                _metrics.RecordLatency("http", sw.ElapsedMilliseconds);
             }
-            catch (Exception ex)
+            else
             {
-                sw.Stop();
-                _metrics.RecordFailed("http");
-                _logger.LogWarning(ex, "HTTP send failed {DeviceId} seq={Seq}", task.DeviceId, task.Sequence);
+                var status = result == SendResult.FatalFailure ? "fatal" : "retry_exhausted";
+                _metrics.RecordFailed("http", rel, status);
             }
         }
     }
 
     private async Task ConsumeMqtt(ChannelReader<SendTask> reader, CancellationToken ct)
     {
-        var factory = new MqttClientFactory();
-        using var client = factory.CreateMqttClient();
+        // 边缘代理模式：ProxyUrl 非空时走代理，否则直连网关
+        var proxyUrl = _opts.ProxyUrl;
+        var effectiveUrl = string.IsNullOrWhiteSpace(proxyUrl)
+            ? _opts.MqttWebSocketUrl
+            : proxyUrl;
+        var uri = new Uri(effectiveUrl);
+        var host = uri.Host;
+        var port = uri.Port > 0 ? uri.Port : 1883;
 
-        var clientOptions = new MqttClientOptionsBuilder()
-            .WithWebSocketServer(o => o.WithUri(_opts.MqttWebSocketUrl))
-            .WithClientId($"sim-{Guid.NewGuid():N}")
-            .WithCleanSession()
-            .Build();
-
-        await client.ConnectAsync(clientOptions, ct);
+        var generator = new TelemetryGenerator();
+        await using var sender = new MqttTelemetrySender(
+            _loggerFactory.CreateLogger<MqttTelemetrySender>());
+        await sender.EnsureConnectedAsync(host, port, "simulator", ct);
 
         await foreach (var task in reader.ReadAllAsync(ct))
         {
-            var sw = Stopwatch.StartNew();
-            try
+            if (!sender.IsConnected)
             {
-                var topic = $"device/{task.DeviceId}/telemetry";
-                var payload = new
-                {
-                    deviceId = task.DeviceId,
-                    metricType = task.MetricType,
-                    payload = task.Payload,
-                    timestamp = task.Timestamp,
-                    sequence = task.Sequence
-                };
-                var json = JsonSerializer.Serialize(payload, SerializerSetup.TightOptions);
+                var rel = task.Reliability == ReliabilityLevel.Critical ? "critical" : "best_effort";
+                _metrics.RecordFailed("mqtt", rel, "fatal");
+                continue;
+            }
 
-                var msg = new MqttApplicationMessageBuilder()
-                    .WithTopic(topic)
-                    .WithPayload(json)
-                    .WithQualityOfServiceLevel(MQTTnet.Protocol.MqttQualityOfServiceLevel.AtMostOnce)
-                    .Build();
+            var sw = Stopwatch.StartNew();
+            var envelope = generator.Generate(task.DeviceId, task.Reliability, task.Sequence);
+            var result = await SendWithRetryAsync(
+                envelope, (e, c) => sender.SendAsync(e, c), ct);
+            sw.Stop();
 
-                await client.PublishAsync(msg, ct);
-                sw.Stop();
+            var rel2 = task.Reliability == ReliabilityLevel.Critical ? "critical" : "best_effort";
+            var topic = task.Reliability == ReliabilityLevel.Critical ? "event.critical" : "telemetry.raw";
 
-                _metrics.RecordSent("mqtt");
+            if (result == SendResult.Success)
+            {
+                _metrics.RecordSent("mqtt", rel2, topic);
                 _metrics.RecordLatency("mqtt", sw.ElapsedMilliseconds);
             }
-            catch (Exception ex)
+            else
             {
-                sw.Stop();
-                _metrics.RecordFailed("mqtt");
-                _logger.LogWarning(ex, "MQTT send failed {DeviceId} seq={Seq}", task.DeviceId, task.Sequence);
+                var status = result == SendResult.FatalFailure ? "fatal" : "retry_exhausted";
+                _metrics.RecordFailed("mqtt", rel2, status);
             }
         }
+    }
 
-        await client.DisconnectAsync();
+    /// <summary>
+    /// 指数退避有限重试：3 次重试（100ms → 200ms → 400ms），FatalFailure 不重试。
+    /// </summary>
+    private async Task<SendResult> SendWithRetryAsync(
+        TelemetryEnvelope envelope,
+        Func<TelemetryEnvelope, CancellationToken, Task<SendResult>> send,
+        CancellationToken ct)
+    {
+        const int maxRetries = 3;
+        var delays = new[] { 100, 200, 400 };
+
+        for (var attempt = 0; attempt <= maxRetries; attempt++)
+        {
+            if (attempt > 0)
+                await Task.Delay(delays[attempt - 1], ct);
+
+            var result = await send(envelope, ct);
+
+            if (result != SendResult.RetryableFailure)
+                return result;
+
+            _logger.LogDebug("Retry {Attempt}/{Max} for {EventId}",
+                attempt, maxRetries, envelope.EventId);
+        }
+
+        _logger.LogWarning("Retries exhausted for {EventId}", envelope.EventId);
+        return SendResult.RetryableFailure;
     }
 
     private sealed record SendTask(
         string DeviceId, string MetricType, object? Payload,
-        long Timestamp, long Sequence);
+        long Timestamp, long Sequence, ReliabilityLevel Reliability);
 }

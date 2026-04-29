@@ -1,0 +1,7 @@
+user iotgateway
+topic read $share/gateway-group/device/+/telemetry
+topic read $share/gateway-group/device/+/event/critical
+
+user devicesim
+topic write device/+/telemetry
+topic write device/+/event/critical

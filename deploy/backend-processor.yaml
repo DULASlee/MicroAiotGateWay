@@ -1,0 +1,113 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-processor
+  namespace: iothunter
+  labels:
+    app: backend-processor
+  annotations:
+    prometheus.io/port: "9464"
+    prometheus.io/scrape: "true"
+spec:
+  selector:
+    app: backend-processor
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+    - name: metrics
+      port: 9464
+      targetPort: 9464
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-processor
+  namespace: iothunter
+  labels:
+    app: backend-processor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend-processor
+  template:
+    metadata:
+      labels:
+        app: backend-processor
+      annotations:
+        prometheus.io/port: "9464"
+        prometheus.io/scrape: "true"
+    spec:
+      terminationGracePeriodSeconds: 45
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: backend-processor
+                topologyKey: kubernetes.io/hostname
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        readOnlyRootFilesystem: true
+      containers:
+        - name: backend-processor
+          image: backend-processor:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+              name: http
+            - containerPort: 9464
+              name: metrics
+          env:
+            # Kafka（.NET Configuration key: Kafka:BootstrapServers）
+            - name: Kafka__BootstrapServers
+              valueFrom:
+                secretKeyRef:
+                  name: kafka-secret
+                  key: Kafka__BootstrapServers
+            # Postgres（.NET GetConnectionString("Postgres") 读取 ConnectionStrings:Postgres）
+            - name: ConnectionStrings__Postgres
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: ConnectionStrings__Postgres
+            # Redis（.NET GetConnectionString("Redis") 读取 ConnectionStrings:Redis）
+            - name: ConnectionStrings__Redis
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: ConnectionStrings__Redis
+            - name: ASPNETCORE_URLS
+              value: "http://+:80"
+            - name: OpenTelemetry__OtlpEndpoint
+              value: "http://otel-collector.iothunter.svc:4317"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "2.0"
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /health/ready
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

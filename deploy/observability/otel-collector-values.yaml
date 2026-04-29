@@ -1,0 +1,31 @@
+mode: daemonset
+config:
+  # 边缘代理架构预留说明：
+  # 真实设备流量通过边缘节点（如 Traefik/Nginx）暴露公网，
+  # 代理将干净的内网流量转发至网关。网关感知不到代理存在，完全解耦公网脏流量。
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+  processors:
+    memory_limiter:
+      check_interval: 1s
+      limit_mib: 512
+      spike_limit_mib: 128
+    batch:
+      timeout: 5s
+      send_batch_size: 512
+    probabilistic_sampler:
+      sampling_percentage: 5.0
+  exporters:
+    otlp/jaeger:
+      endpoint: jaeger-collector.iothunter.svc:4317
+      tls:
+        insecure: true
+  service:
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, batch, probabilistic_sampler]
+        exporters: [otlp/jaeger]

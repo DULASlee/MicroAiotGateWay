@@ -1,0 +1,99 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mosquitto
+  namespace: iothunter
+  labels:
+    app: mosquitto
+spec:
+  selector:
+    app: mosquitto
+  ports:
+    - name: mqtt
+      port: 1883
+      targetPort: 1883
+    - name: ws
+      port: 8083
+      targetPort: 8083
+    - name: mqtts
+      port: 8883
+      targetPort: 8883
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mosquitto
+  namespace: iothunter
+  labels:
+    app: mosquitto
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mosquitto
+  template:
+    metadata:
+      labels:
+        app: mosquitto
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1883
+        fsGroup: 1883
+      containers:
+        - name: mosquitto
+          image: mosquitto-iot:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 1883
+              name: mqtt
+            - containerPort: 8083
+              name: ws
+            - containerPort: 8883
+              name: mqtts
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          livenessProbe:
+            tcpSocket:
+              port: 1883
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 1883
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /mosquitto/config/mosquitto.conf
+              subPath: mosquitto.conf
+              readOnly: true
+            - name: config
+              mountPath: /mosquitto/config/passwordfile
+              subPath: passwordfile
+              readOnly: true
+            - name: config
+              mountPath: /mosquitto/config/aclfile
+              subPath: aclfile
+              readOnly: true
+            - name: data
+              mountPath: /mosquitto/data
+            - name: tls
+              mountPath: /mosquitto/config/certs
+              readOnly: true
+      volumes:
+        - name: config
+          secret:
+            secretName: mosquitto-config
+        - name: data
+          emptyDir: {}
+        - name: tls
+          secret:
+            secretName: mosquitto-tls
+            optional: true
