@@ -25,3 +25,17 @@ services:
       - "8083:8083"
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: iothunter
+      POSTGRES_USER: iothunter
+      POSTGRES_PASSWORD: iothunter123
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"

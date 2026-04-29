@@ -1,5 +1,6 @@
 using System.Text.Json;
 using IoTHunter.Shared.Domain;
+using IoTHunter.Shared.Infrastructure;
 using IoTGateway.Contracts;
 
 namespace IoTGateway.Infrastructure.Messaging;

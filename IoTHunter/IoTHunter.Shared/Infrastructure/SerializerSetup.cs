@@ -1,9 +1,9 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace IoTGateway.Infrastructure;
+namespace IoTHunter.Shared.Infrastructure;
 
-internal static class SerializerSetup
+public static class SerializerSetup
 {
     public static readonly JsonSerializerOptions TightOptions = new()
     {

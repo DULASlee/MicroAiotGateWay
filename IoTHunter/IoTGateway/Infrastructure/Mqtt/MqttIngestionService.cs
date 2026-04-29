@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using IoTHunter.Shared.Domain;
+using IoTHunter.Shared.Infrastructure;
 using IoTGateway.Contracts;
 using IoTGateway.Infrastructure.Messaging;
 using IoTGateway.Infrastructure.Metrics;

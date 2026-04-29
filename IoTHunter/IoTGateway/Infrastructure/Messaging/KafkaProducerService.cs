@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Confluent.Kafka;
 using IoTHunter.Shared.Domain;
+using IoTHunter.Shared.Infrastructure;
 using IoTGateway.Infrastructure.Options;
 using OpenTelemetry;
 using OpenTelemetry.Context.Propagation;

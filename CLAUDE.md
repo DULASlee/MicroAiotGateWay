@@ -88,12 +88,15 @@ These are non-negotiable decisions from the architecture document:
 - **MQTTnet v5.x API**: Use `MqttClientFactory` (not `MqttFactory`), `P.Load` (not `P.PayloadSegment`). `MqttClientFactory` is in the main `MQTTnet` package — `MQTTnet.Extensions.ManagedClient` is incompatible.
 - **Confluent.Kafka `EnableIdempotence=true`** requires PID acquisition on first produce. Kafka must be fully started before the first request, or the producer will fail with "Coordinator load in progress". On restart, kill Gateway and restart fresh.
 - **Polly.Core v8**: `ResiliencePipeline<T>.ExecuteAsync(Func<CancellationToken, ValueTask<T>>)` — only `CancellationToken` overload, no `CancellationToken+State` overload.
+- **StackExchange.Redis `ScriptEvaluate`**: can accept raw Lua string directly; no need to `LuaScript.Prepare()` first. Pass args as `RedisValue[]`.
+- **Local Redis port conflict**: On Windows, a native Redis service may bind to `127.0.0.1:6379` before Docker's port forwarding. The .NET app connects to the native one, not Docker. Check with `netstat -ano | grep 6379` and kill the native process before starting.
+- **BackendProcessor file lock**: The running process locks `BackendProcessor.exe`. Kill it before building: `Get-Process BackendProcessor \| Stop-Process -Force`.
 
 ## Current Project State
 
 **Step 1 complete.** Solution skeleton, shared infrastructure, OTel/Serilog observability.
 
-**Step 2 complete.** IoTGateway dual-protocol ingress with Kafka ack boundary:
+**Step 2 complete.** IoTGateway dual-protocol ingress with Kafka ack boundary.
 - HTTP `POST /api/v1/telemetry` → 202 (Kafka ack) / 503 (Kafka unavailable)
 - HTTP `POST /api/v1/events/critical` → 202 / 503, reliability_level=2
 - MQTT WebSocket shared subscriptions: `$share/gateway-group/device/+/telemetry`, `device/+/event/critical`
@@ -104,11 +107,50 @@ These are non-negotiable decisions from the architecture document:
 - Docker infra: Kafka 7.6.0 + Zookeeper + Mosquitto 2.0.18 (MQTT:1883, WebSocket:8083)
 - All 6 end-to-end tests passed
 
-**Known issue**: W3C `traceparent` not appearing in Kafka headers. Root cause: `ActivitySource("IoTGateway.Kafka")` has no OTel listener → `StartActivity` returns null → `activity?.Context ?? default` gives default context → W3C propagator skips injection. Fix pending.
+**Step 3 complete.** BackendProcessor with 3 independent Kafka consumer workers, CQRS query API, DLQ routing:
+- 3 consumer groups: `iot-persistence`, `iot-latest-projection`, `iot-timeseries-projection` — each commits independently
+- PG batch persistence: INSERT ON CONFLICT (event_id) DO NOTHING, 100-count or 5s flush, `StoreOffset()`+`Commit()`
+- Redis latest-value projection: Lua atomic sequence compare, 24h TTL, stale rejection
+- Timeseries worker: skeleton with `Enabled: false` toggle
+- DLQ: `telemetry.deadletter` topic, `failure_reason` header, device_id regex + timestamp range validation
+- CQRS API: `/api/v2/devices/{id}/latest` (Redis-only 200/404, `X-Data-Freshness`), `/history` (PG pagination), `/timeseries` (501)
+- Health checks: PG `SELECT 1` + Redis `PING` via `/health/ready`, graceful shutdown `ShutdownTimeout=45s`
 
-**Next**: Step 3 — BackendProcessor with 3 Kafka consumer workers.
+### BackendProcessor Structure (Step 3 additions)
+```
+BackendProcessor/Infrastructure/
+├── Kafka/
+│   ├── KafkaConsumerFactory.cs            # EnableAutoCommit=false, EnableAutoOffsetStore=false
+│   ├── TelemetryPersistenceWorker.cs      # PG batch INSERT ON CONFLICT
+│   ├── LatestValueProjectionWorker.cs     # Redis Lua atomic update
+│   ├── TimeseriesProjectionWorker.cs      # Skeleton with config toggle
+│   └── KafkaDlqProducer.cs                # → telemetry.deadletter
+├── Validation/EnvelopeValidator.cs        # device_id regex + timestamp range
+└── Health/PostgresHealthCheck.cs, RedisHealthCheck.cs
+```
 
-Note: `OpenTelemetry.Exporter.Prometheus.AspNetCore` was installed with `--prerelease` (only 1.15.3-beta.1 is available; no stable release yet).
+**Step 4 complete.** DeviceSimulator dual-mode load testing tool:
+- `--protocol http|mqtt`, configurable via CLI args + appsettings.json
+- Channel<T> bounded producer-consumer with configurable `Concurrency` consumer Tasks
+- Custom metrics: `simulator_sent_total`, `simulator_failed_total`, `simulator_ack_latency_ms`
+- Configurable: `DeviceCount`, `IntervalMs`, `Concurrency`, `DurationSeconds`
+- Tested: HTTP (3 devices, 500ms, 2 concurrent, 10s → 60 msgs), MQTT (2 devices, 1s → 10 msgs)
+
+### DeviceSimulator Structure (Step 4)
+```
+DeviceSimulator/
+├── Program.cs                                    # CLI arg parsing, DI wiring
+├── SimulatorWorker.cs                             # Channel<T> producer/consumer, HTTP+MQTT
+└── Infrastructure/
+    ├── Options/SimulatorOptions.cs                # Protocol, DeviceCount, IntervalMs, Concurrency
+    └── Metrics/SimulatorMetrics.cs                # Custom Meter (sent, failed, ack_latency)
+```
+
+**Known issue (resolved)** — fix pending (ActivitySource needs OTel listener).
+
+**Next**: Step 5 per architecture plan.
+
+Note: `OpenTelemetry.Exporter.Prometheus.AspNetCore` installed with `--prerelease` (1.15.3-beta.1).
 
 ## Key Dependencies
 
