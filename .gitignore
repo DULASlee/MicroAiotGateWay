@@ -66,3 +66,15 @@ Desktop.ini
 .env
 .env.*
 *.env.local
+
+## Docker image tarballs
+*.tar
+
+## Credentials
+pwfile
+
+## Backup files
+*.bak
+
+## Cursor indexing
+.cursorindexingignore
