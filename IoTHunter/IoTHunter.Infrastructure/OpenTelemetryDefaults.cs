@@ -5,7 +5,7 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
-namespace IoTHunter.Shared.Infrastructure;
+namespace IoTHunter.Infrastructure;
 
 public static class OpenTelemetryDefaults
 {
@@ -22,7 +22,10 @@ public static class OpenTelemetryDefaults
             {
                 tracing
                     .AddHttpClientInstrumentation()
-                    .AddSource(serviceName);
+                    .AddSource(serviceName)
+                    .AddSource($"{serviceName}.Kafka")
+                    .AddSource($"{serviceName}.Persistence")
+                    .AddSource($"{serviceName}.Projection");
 
                 if (!string.IsNullOrWhiteSpace(otlpEndpoint))
                 {

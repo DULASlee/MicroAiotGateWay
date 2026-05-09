@@ -2,7 +2,7 @@ using Serilog.Core;
 using Serilog.Events;
 using System.Diagnostics;
 
-namespace IoTHunter.Shared.Infrastructure;
+namespace IoTHunter.Infrastructure;
 
 public sealed class TraceIdEnricher : ILogEventEnricher
 {

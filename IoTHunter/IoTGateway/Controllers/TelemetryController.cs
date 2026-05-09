@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using IoTHunter.Shared.Domain;
 using IoTGateway.Contracts;
 using IoTGateway.Infrastructure.Messaging;
@@ -13,22 +12,15 @@ public sealed class TelemetryController : ControllerBase
 {
     private readonly KafkaProducerService _producer;
     private readonly GatewayMetrics _metrics;
-    private readonly ILogger<TelemetryController> _logger;
 
-    public TelemetryController(
-        KafkaProducerService producer,
-        GatewayMetrics metrics,
-        ILogger<TelemetryController> logger)
+    public TelemetryController(KafkaProducerService producer, GatewayMetrics metrics)
     {
         _producer = producer;
         _metrics = metrics;
-        _logger = logger;
     }
 
-    /// <summary>普通遥测接入：Kafka ack 后返回 202</summary>
     [HttpPost("telemetry")]
-    public async Task<IActionResult> PostTelemetry(
-        [FromBody] TelemetryRequest request, CancellationToken ct)
+    public async Task<IActionResult> PostTelemetry([FromBody] TelemetryRequest request, CancellationToken ct)
     {
         if (!ModelState.IsValid)
         {
@@ -37,13 +29,12 @@ public sealed class TelemetryController : ControllerBase
         }
 
         var envelope = TelemetryEnvelopeMapper.ToEnvelope(request, ReliabilityLevel.BestEffort);
-        return await ProduceAndRespondAsync("telemetry.raw", envelope, "http", ct);
+        var topic = ReliabilityConfiguration.KafkaTopics[ReliabilityLevel.BestEffort];
+        return await ProduceAndRespondAsync(topic, envelope, "http", ct);
     }
 
-    /// <summary>关键事件接入：必须 Kafka ack 成功 (ADR-020)</summary>
     [HttpPost("events/critical")]
-    public async Task<IActionResult> PostCritical(
-        [FromBody] TelemetryRequest request, CancellationToken ct)
+    public async Task<IActionResult> PostCritical([FromBody] TelemetryRequest request, CancellationToken ct)
     {
         if (!ModelState.IsValid)
         {
@@ -52,13 +43,14 @@ public sealed class TelemetryController : ControllerBase
         }
 
         var envelope = TelemetryEnvelopeMapper.ToEnvelope(request, ReliabilityLevel.Critical);
-        return await ProduceAndRespondAsync("event.critical", envelope, "http", ct);
+        var topic = ReliabilityConfiguration.KafkaTopics[ReliabilityLevel.Critical];
+        return await ProduceAndRespondAsync(topic, envelope, "http", ct);
     }
 
     private async Task<IActionResult> ProduceAndRespondAsync(
         string topic, TelemetryEnvelope envelope, string protocol, CancellationToken ct)
     {
-        var stopwatch = Stopwatch.StartNew();
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             var result = await _producer.ProduceAsync(topic, envelope, ct);
@@ -76,17 +68,13 @@ public sealed class TelemetryController : ControllerBase
                 latencyMs = stopwatch.ElapsedMilliseconds
             });
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             stopwatch.Stop();
             _metrics.RecordRequest(protocol, topic, "failure");
             _metrics.RecordRejection(protocol, "kafka_unavailable");
 
-            _logger.LogError(ex,
-                "HTTP→Kafka failed {EventId} topic={Topic} latency={LatencyMs}ms",
-                envelope.EventId, topic, stopwatch.ElapsedMilliseconds);
-
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            return StatusCode(503, new
             {
                 eventId = envelope.EventId,
                 status = "unavailable",

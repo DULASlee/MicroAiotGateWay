@@ -2,6 +2,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 COPY IoTHunter.Shared/ IoTHunter.Shared/
+COPY IoTHunter.Infrastructure/ IoTHunter.Infrastructure/
 COPY DeviceSimulator/ DeviceSimulator/
 
 WORKDIR /src/DeviceSimulator
@@ -10,6 +11,7 @@ RUN dotnet publish DeviceSimulator.csproj -c Release -o /app/publish --no-restor
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 EXPOSE 80
 EXPOSE 9464
 

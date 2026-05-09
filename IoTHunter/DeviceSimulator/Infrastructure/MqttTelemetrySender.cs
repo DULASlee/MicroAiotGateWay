@@ -54,7 +54,7 @@ internal sealed class MqttTelemetrySender : IAsyncDisposable
         {
             deviceId = envelope.DeviceId,
             metricType = envelope.MetricType,
-            payload = envelope.PayloadJson,
+            payload = JsonSerializer.Deserialize<JsonElement>(envelope.PayloadJson),
             timestamp = envelope.RecordedAt.ToUnixTimeMilliseconds(),
             sequence = envelope.Sequence
         }, SerializerSetup.TightOptions);

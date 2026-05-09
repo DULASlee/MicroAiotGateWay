@@ -71,6 +71,16 @@ spec:
                   key: Kafka__BootstrapServers
             - name: Mqtt__WebSocketUrl
               value: "ws://mosquitto:8083/mqtt"
+            - name: Mqtt__Username
+              valueFrom:
+                secretKeyRef:
+                  name: mqtt-secret
+                  key: Mqtt__Username
+            - name: Mqtt__Password
+              valueFrom:
+                secretKeyRef:
+                  name: mqtt-secret
+                  key: Mqtt__Password
             - name: ASPNETCORE_URLS
               value: "http://+:80"
             - name: OpenTelemetry__OtlpEndpoint

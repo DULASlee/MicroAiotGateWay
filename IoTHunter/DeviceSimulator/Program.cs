@@ -1,7 +1,8 @@
 using DeviceSimulator;
 using DeviceSimulator.Infrastructure.Metrics;
 using DeviceSimulator.Infrastructure.Options;
-using IoTHunter.Shared.Infrastructure;
+using IoTHunter.Infrastructure;
+using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
 using Serilog;
 
@@ -56,5 +57,20 @@ var app = builder.Build();
 app.UseRouting();
 app.MapPrometheusScrapingEndpoint();
 app.MapGet("/", () => "DeviceSimulator OK");
+app.MapGet("/api/simulator/health", () => Results.Ok(new { status = "running" }));
+app.MapGet("/api/simulator/config", (IOptions<SimulatorOptions> opts) => Results.Ok(new
+{
+    opts.Value.Protocol,
+    Target = opts.Value.Protocol.Equals("mqtt", StringComparison.OrdinalIgnoreCase)
+        ? opts.Value.MqttWebSocketUrl
+        : opts.Value.GatewayHttpBase,
+    opts.Value.DeviceCount,
+    opts.Value.IntervalMs,
+    opts.Value.Concurrency,
+    opts.Value.DurationSeconds,
+    opts.Value.CriticalEventRatio
+}));
+app.MapGet("/api/simulator/snapshot", (SimulatorMetrics metrics) =>
+    Results.Ok(metrics.GetSnapshot()));
 
 await app.RunAsync();

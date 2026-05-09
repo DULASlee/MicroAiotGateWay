@@ -5,9 +5,16 @@ using Polly.Timeout;
 
 namespace IoTGateway.Infrastructure.Resilience;
 
-internal static class ResiliencePipelines
+public sealed class KafkaResiliencePipeline
 {
-    public static ResiliencePipeline<DeliveryResult<Null, string>> BuildKafkaPipeline()
+    private readonly ILogger<KafkaResiliencePipeline> _logger;
+
+    public KafkaResiliencePipeline(ILogger<KafkaResiliencePipeline> logger)
+    {
+        _logger = logger;
+    }
+
+    public ResiliencePipeline<DeliveryResult<Null, string>> Build()
     {
         return new ResiliencePipelineBuilder<DeliveryResult<Null, string>>()
             .AddRetry(new RetryStrategyOptions<DeliveryResult<Null, string>>
@@ -20,9 +27,9 @@ internal static class ResiliencePipelines
                 BackoffType = DelayBackoffType.Exponential,
                 OnRetry = args =>
                 {
-                    Console.WriteLine(
-                        "[Polly] Kafka produce retry {Attempt}/3 after {DelayMs}ms",
-                        args.AttemptNumber, args.RetryDelay.TotalMilliseconds);
+                    _logger.LogWarning(
+                        "Kafka produce retry {Attempt}/{MaxAttempts} after {DelayMs}ms",
+                        args.AttemptNumber, 3, args.RetryDelay.TotalMilliseconds);
                     return ValueTask.CompletedTask;
                 }
             })

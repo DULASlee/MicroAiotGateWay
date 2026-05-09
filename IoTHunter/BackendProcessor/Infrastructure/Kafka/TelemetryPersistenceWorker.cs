@@ -52,6 +52,7 @@ internal sealed class TelemetryPersistenceWorker : BackgroundService
     {
         var batch = new List<ConsumeResult<Null, string>>();
         var lastFlush = DateTime.UtcNow;
+        var consecutiveFailures = 0;
 
         try
         {
@@ -62,7 +63,7 @@ internal sealed class TelemetryPersistenceWorker : BackgroundService
                 {
                     if (batch.Count > 0 && (DateTime.UtcNow - lastFlush).TotalSeconds >= 5)
                     {
-                        ProcessBatch(batch);
+                        FlushWithRetry(batch, ref consecutiveFailures);
                         batch.Clear();
                         lastFlush = DateTime.UtcNow;
                     }
@@ -75,7 +76,7 @@ internal sealed class TelemetryPersistenceWorker : BackgroundService
 
                 if (batch.Count >= 100 || (batch.Count > 0 && (DateTime.UtcNow - lastFlush).TotalSeconds >= 5))
                 {
-                    ProcessBatch(batch);
+                    FlushWithRetry(batch, ref consecutiveFailures);
                     batch.Clear();
                     lastFlush = DateTime.UtcNow;
                 }
@@ -84,8 +85,36 @@ internal sealed class TelemetryPersistenceWorker : BackgroundService
         catch (OperationCanceledException) { }
         finally
         {
-            if (batch.Count > 0) ProcessBatch(batch);
+            if (batch.Count > 0) FlushWithRetry(batch, ref consecutiveFailures);
             _consumer.Close();
+        }
+    }
+
+    private void FlushWithRetry(List<ConsumeResult<Null, string>> batch, ref int consecutiveFailures)
+    {
+        try
+        {
+            ProcessBatch(batch);
+            consecutiveFailures = 0;
+        }
+        catch (Exception ex)
+        {
+            consecutiveFailures++;
+            _logger.LogError(ex,
+                "Batch failed ({ConsecutiveFailures} consecutive). Skipping {Count} messages to DLQ.",
+                consecutiveFailures, batch.Count);
+
+            if (consecutiveFailures >= 3)
+            {
+                foreach (var r in batch)
+                    _ = _dlq.ProduceAsync(r.Message.Value, "batch_persistent_failure", CancellationToken.None);
+
+                foreach (var r in batch)
+                    _consumer.StoreOffset(r);
+                _consumer.Commit();
+
+                consecutiveFailures = 0;
+            }
         }
     }
 

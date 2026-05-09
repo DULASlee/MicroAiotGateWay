@@ -1,7 +1,9 @@
 using BackendProcessor.Infrastructure.Health;
 using BackendProcessor.Infrastructure.Kafka;
 using BackendProcessor.Infrastructure.Options;
-using IoTHunter.Shared.Infrastructure;
+using BackendProcessor.Hubs;
+using IoTHunter.Infrastructure;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Npgsql;
 using OpenTelemetry.Metrics;
@@ -24,7 +26,7 @@ builder.Services.AddSingleton(NpgsqlDataSource.Create(csPg));
 var csRedis = builder.Configuration.GetConnectionString("Redis")!;
 builder.Services.AddSingleton(ConnectionMultiplexer.Connect(csRedis));
 
-var kafkaBootstrap = builder.Configuration["Kafka:BootstrapServers"] ?? "localhost:9092";
+var kafkaBootstrap = builder.Configuration["Kafka:BootstrapServers"] ?? throw new InvalidOperationException("Kafka:BootstrapServers is required");
 
 // ---- 3. DLQ Producer (shared) ----
 builder.Services.AddSingleton(sp =>
@@ -75,6 +77,11 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<TimeseriesProjecti
 
 // ---- 4. Controllers ----
 builder.Services.AddControllers();
+builder.Services.AddSignalR();
+builder.Services.AddHttpClient("JaegerClient", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
 
 // ---- 5. Health Checks ----
 builder.Services.AddHealthChecks()
@@ -104,6 +111,7 @@ var app = builder.Build();
 app.UseSerilogRequestLogging();
 app.UseOpenTelemetryPrometheusScrapingEndpoint();
 app.MapControllers();
+app.MapHub<MonitoringHub>("/hubs/monitoring");
 app.MapHealthChecks("/health/ready", new()
 {
     ResponseWriter = async (context, report) =>
@@ -123,5 +131,7 @@ app.MapHealthChecks("/health/ready", new()
         await context.Response.WriteAsync(json);
     }
 });
+
+app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 
 app.Run();

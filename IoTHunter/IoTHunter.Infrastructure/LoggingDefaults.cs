@@ -1,6 +1,6 @@
 using Serilog;
 
-namespace IoTHunter.Shared.Infrastructure;
+namespace IoTHunter.Infrastructure;
 
 public static class LoggingDefaults
 {

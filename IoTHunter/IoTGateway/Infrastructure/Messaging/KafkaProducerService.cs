@@ -5,10 +5,10 @@ using Confluent.Kafka;
 using IoTHunter.Shared.Domain;
 using IoTHunter.Shared.Infrastructure;
 using IoTGateway.Infrastructure.Options;
+using IoTGateway.Infrastructure.Resilience;
 using OpenTelemetry;
 using OpenTelemetry.Context.Propagation;
 using Polly;
-using Polly.Timeout;
 
 namespace IoTGateway.Infrastructure.Messaging;
 
@@ -23,10 +23,10 @@ public sealed class KafkaProducerService : IDisposable
 
     public KafkaProducerService(
         KafkaOptions options,
-        ResiliencePipeline<DeliveryResult<Null, string>> pipeline,
+        KafkaResiliencePipeline pipeline,
         ILogger<KafkaProducerService> logger)
     {
-        _pipeline = pipeline;
+        _pipeline = pipeline.Build();
         _logger = logger;
 
         var config = new ProducerConfig
@@ -42,8 +42,7 @@ public sealed class KafkaProducerService : IDisposable
         };
 
         _producer = new ProducerBuilder<Null, string>(config).Build();
-        _logger.LogInformation(
-            "Kafka producer initialized: {BootstrapServers} client={ClientId}",
+        _logger.LogInformation("Kafka producer initialized: {BootstrapServers} client={ClientId}",
             options.BootstrapServers, options.ClientId);
     }
 
@@ -57,26 +56,25 @@ public sealed class KafkaProducerService : IDisposable
         using var activity = ActivitySource.StartActivity(
             "Kafka.Produce", ActivityKind.Producer, parentActivity?.Context ?? default);
 
-        // ADR-004: 在 Kafka Header 注入 W3C Trace Context
+        // ADR-004: Inject W3C Trace Context into Kafka Headers
         Propagator.Inject(
-            new PropagationContext(activity?.Context ?? parentActivity?.Context ?? default, Baggage.Current),
+            new PropagationContext(activity?.Context ?? default, Baggage.Current),
             message.Headers,
             (headers, key, value) => headers.Add(key, Encoding.UTF8.GetBytes(value)));
 
-        // 业务元数据注入
+        // Business metadata headers
         message.Headers.Add("event_id", Encoding.UTF8.GetBytes(envelope.EventId));
-        message.Headers.Add("schema_version",
-            Encoding.UTF8.GetBytes(envelope.SchemaVersion.ToString()));
-        message.Headers.Add("reliability_level",
-            Encoding.UTF8.GetBytes(((int)envelope.ReliabilityLevel).ToString()));
+        message.Headers.Add("schema_version", Encoding.UTF8.GetBytes(envelope.SchemaVersion.ToString()));
+        message.Headers.Add("reliability_level", Encoding.UTF8.GetBytes(((int)envelope.ReliabilityLevel).ToString()));
 
         var stopwatch = Stopwatch.StartNew();
         try
         {
             var result = await _pipeline.ExecuteAsync(
-                async innerCt => await _producer.ProduceAsync(topic, message, innerCt));
+                async innerCt => await _producer.ProduceAsync(topic, message, innerCt), ct);
 
             stopwatch.Stop();
+            activity?.SetTag("deviceId", envelope.DeviceId);
             activity?.SetTag("messaging.system", "kafka");
             activity?.SetTag("messaging.destination", topic);
             activity?.SetTag("messaging.kafka.partition", result.Partition.Value);
@@ -84,8 +82,7 @@ public sealed class KafkaProducerService : IDisposable
 
             _logger.LogInformation(
                 "Kafka ack {EventId} topic={Topic} partition={Partition} offset={Offset} latency={LatencyMs}ms",
-                envelope.EventId, topic, result.Partition.Value, result.Offset.Value,
-                stopwatch.ElapsedMilliseconds);
+                envelope.EventId, topic, result.Partition.Value, result.Offset.Value, stopwatch.ElapsedMilliseconds);
 
             return result;
         }

@@ -1,4 +1,3 @@
-using System.ComponentModel.DataAnnotations;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -15,8 +14,7 @@ namespace IoTGateway.Infrastructure.Mqtt;
 
 internal sealed partial class MqttIngestionService : BackgroundService
 {
-    [GeneratedRegex(
-        @"^device/(?<deviceId>[^/]+)/(?<rest>telemetry|event/critical)$",
+    [GeneratedRegex(@"^device/(?<deviceId>[^/]+)/(?<rest>telemetry|event/critical)$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex TopicPattern();
 
@@ -25,8 +23,7 @@ internal sealed partial class MqttIngestionService : BackgroundService
     private readonly GatewayMetrics _metrics;
     private readonly ILogger<MqttIngestionService> _logger;
     private IMqttClient? _client;
-
-    public bool IsConnected => _client?.IsConnected ?? false;
+    private CancellationToken _stoppingToken;
 
     public MqttIngestionService(
         KafkaProducerService producer,
@@ -40,66 +37,103 @@ internal sealed partial class MqttIngestionService : BackgroundService
         _logger = logger;
     }
 
+    public bool IsConnected => _client?.IsConnected ?? false;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _stoppingToken = stoppingToken;
         var factory = new MqttClientFactory();
-        _client = factory.CreateMqttClient();
+        var attempt = 0;
 
-        _client.DisconnectedAsync += async e =>
+        while (!stoppingToken.IsCancellationRequested)
         {
-            if (e.ClientWasConnected && !stoppingToken.IsCancellationRequested)
+            attempt++;
+            var client = factory.CreateMqttClient();
+            var disconnectTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            client.DisconnectedAsync += e =>
             {
-                _logger.LogWarning(
-                    "MQTT disconnected: {Reason}. Reconnecting in {DelayMs}ms...",
-                    e.Reason, _mqttOptions.AutoReconnectDelayMs);
-                await Task.Delay(_mqttOptions.AutoReconnectDelayMs, stoppingToken);
-                try { await ConnectAndSubscribeAsync(stoppingToken); }
-                catch (Exception ex) { _logger.LogError(ex, "MQTT reconnect failed"); }
+                if (e.ClientWasConnected)
+                {
+                    _logger.LogWarning("MQTT disconnected: {Reason}", e.Reason);
+                    disconnectTcs.TrySetResult(true);
+                }
+                return Task.CompletedTask;
+            };
+
+            client.ApplicationMessageReceivedAsync += OnMessageReceivedAsync;
+
+            try
+            {
+                await ConnectAndSubscribeAsync(client, stoppingToken);
+                _client = client;
+                attempt = 0; // reset backoff counter on successful connection
+                _logger.LogInformation("MQTT ingestion started, TCP={Server}:{Port}",
+                    _mqttOptions.TcpServer, _mqttOptions.TcpPort);
+
+                // Wait until disconnect or shutdown — TCS gives instant wake-up on disconnect
+                var completed = await Task.WhenAny(disconnectTcs.Task, Task.Delay(Timeout.Infinite, stoppingToken));
+                if (completed == disconnectTcs.Task)
+                {
+                    // Disconnected — clean up and loop back to reconnect
+                    _logger.LogWarning("MQTT disconnected, reconnecting...");
+                }
+                await DisposeClientAsync(client);
+                _client = null;
+
+                if (stoppingToken.IsCancellationRequested) break;
             }
-        };
-
-        _client.ApplicationMessageReceivedAsync += OnMessageReceivedAsync;
-
-        await ConnectAndSubscribeAsync(stoppingToken);
-
-        _logger.LogInformation(
-            "MQTT ingestion started: {Url} clientId={ClientId}",
-            _mqttOptions.WebSocketUrl, _mqttOptions.ClientId);
-
-        try { await Task.Delay(Timeout.Infinite, stoppingToken); }
-        catch (OperationCanceledException)
-        {
-            _logger.LogInformation("MQTT ingestion stopping...");
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                await DisposeClientAsync(client);
+                break;
+            }
+            catch (Exception ex)
+            {
+                var delayMs = _mqttOptions.RetryBaseDelayMs * (1 << Math.Min(attempt - 1, 5));
+                _logger.LogError(ex,
+                    "MQTT connection failed (attempt {Attempt}), retrying in {DelayMs}ms",
+                    attempt, delayMs);
+                await DisposeClientAsync(client);
+                try { await Task.Delay(delayMs, stoppingToken); }
+                catch (OperationCanceledException) { break; }
+            }
         }
-        finally
+
+        _logger.LogInformation("MQTT ingestion stopping...");
+        if (_client is not null)
         {
-            if (_client is not null)
-            {
-                await _client.DisconnectAsync();
-                _client.Dispose();
-            }
+            await DisposeClientAsync(_client);
         }
     }
 
-    private async Task ConnectAndSubscribeAsync(CancellationToken ct)
+    private static async Task DisposeClientAsync(IMqttClient client)
     {
-        if (_client is null) return;
+        try { await client.DisconnectAsync(); } catch { }
+        client.Dispose();
+    }
 
-        var clientOptions = new MqttClientOptionsBuilder()
-            .WithWebSocketServer(o => o.WithUri(_mqttOptions.WebSocketUrl))
+    private async Task ConnectAndSubscribeAsync(IMqttClient client, CancellationToken ct)
+    {
+        var clientOptionsBuilder = new MqttClientOptionsBuilder()
+            .WithTcpServer(_mqttOptions.TcpServer, _mqttOptions.TcpPort)
             .WithClientId(_mqttOptions.ClientId)
             .WithCleanSession(false)
-            .WithKeepAlivePeriod(TimeSpan.FromSeconds(30))
-            .Build();
+            .WithKeepAlivePeriod(TimeSpan.FromSeconds(30));
 
-        await _client.ConnectAsync(clientOptions, ct);
+        if (!string.IsNullOrWhiteSpace(_mqttOptions.Username))
+        {
+            clientOptionsBuilder.WithCredentials(_mqttOptions.Username, _mqttOptions.Password);
+        }
 
-        await _client.SubscribeAsync(new MqttTopicFilterBuilder()
+        await client.ConnectAsync(clientOptionsBuilder.Build(), ct);
+
+        await client.SubscribeAsync(new MqttTopicFilterBuilder()
             .WithTopic("$share/gateway-group/device/+/telemetry")
             .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtMostOnce)
             .Build(), ct);
 
-        await _client.SubscribeAsync(new MqttTopicFilterBuilder()
+        await client.SubscribeAsync(new MqttTopicFilterBuilder()
             .WithTopic("$share/gateway-group/device/+/event/critical")
             .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
             .Build(), ct);
@@ -117,7 +151,7 @@ internal sealed partial class MqttIngestionService : BackgroundService
             var match = TopicPattern().Match(topic);
             if (!match.Success)
             {
-                _logger.LogWarning("MQTT rejected: invalid topic format '{Topic}'", topic);
+                _logger.LogWarning("MQTT rejected: invalid topic '{Topic}'", topic);
                 _metrics.RecordRejection("mqtt", "invalid_topic");
                 return;
             }
@@ -125,40 +159,36 @@ internal sealed partial class MqttIngestionService : BackgroundService
             var deviceId = match.Groups["deviceId"].Value;
             var isCritical = match.Groups["rest"].Value == "event/critical";
 
-            var request = JsonSerializer.Deserialize<TelemetryRequest>(
-                payload, SerializerSetup.TightOptions);
+            var request = JsonSerializer.Deserialize<TelemetryRequest>(payload, SerializerSetup.TightOptions);
             if (request is null)
             {
-                _logger.LogWarning(
-                    "MQTT rejected: deserialization failed device={DeviceId}", deviceId);
+                _logger.LogWarning("MQTT rejected: deserialization failed");
                 _metrics.RecordRejection("mqtt", "deserialization_failed");
                 return;
             }
 
-            var validationResults = new List<ValidationResult>();
-            var validationContext = new ValidationContext(request);
-            if (!Validator.TryValidateObject(
+            var validationResults = new List<System.ComponentModel.DataAnnotations.ValidationResult>();
+            var validationContext = new System.ComponentModel.DataAnnotations.ValidationContext(request);
+            if (!System.ComponentModel.DataAnnotations.Validator.TryValidateObject(
                     request, validationContext, validationResults, validateAllProperties: true))
             {
-                var errors = string.Join("; ", validationResults.Select(r => r.ErrorMessage));
-                _logger.LogWarning(
-                    "MQTT rejected: validation failed device={DeviceId} errors={Errors}",
-                    deviceId, errors);
+                _logger.LogWarning("MQTT rejected: validation failed {Errors}", string.Join("; ", validationResults));
                 _metrics.RecordRejection("mqtt", "validation_failed");
                 return;
             }
 
             var reliability = isCritical ? ReliabilityLevel.Critical : ReliabilityLevel.BestEffort;
-            var kafkaTopic = isCritical ? "event.critical" : "telemetry.raw";
+            var kafkaTopic = isCritical
+                ? ReliabilityConfiguration.KafkaTopics[ReliabilityLevel.Critical]
+                : ReliabilityConfiguration.KafkaTopics[ReliabilityLevel.BestEffort];
 
             var envelope = TelemetryEnvelopeMapper.ToEnvelope(request, reliability);
-            await _producer.ProduceAsync(kafkaTopic, envelope, CancellationToken.None);
+            await _producer.ProduceAsync(kafkaTopic, envelope, _stoppingToken);
 
             _metrics.RecordRequest("mqtt", kafkaTopic, "success");
             _metrics.RecordMqttMessage(topic, isCritical ? "qos1" : "qos0");
 
-            _logger.LogInformation(
-                "MQTT→Kafka {EventId} device={DeviceId} topic={MqttTopic}→{KafkaTopic} reliability={Level}",
+            _logger.LogInformation("MQTT→Kafka {EventId} device={DeviceId} topic={MqttTopic}→{KafkaTopic} reliability={Level}",
                 envelope.EventId, deviceId, topic, kafkaTopic, reliability);
         }
         catch (Exception ex)

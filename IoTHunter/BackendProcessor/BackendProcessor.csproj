@@ -25,6 +25,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\IoTHunter.Infrastructure\IoTHunter.Infrastructure.csproj" />
     <ProjectReference Include="..\IoTHunter.Shared\IoTHunter.Shared.csproj" />
   </ItemGroup>
 
