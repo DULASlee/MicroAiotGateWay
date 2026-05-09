@@ -35,7 +35,12 @@ services:
       context: .
       dockerfile: IoTGateway/Dockerfile
     ports:
-      - "5080:80"
+      - "5080:5080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      Kafka__BootstrapServers: kafka:9092
+      Mqtt__TcpServer: mosquitto
+      Mqtt__TcpPort: "1883"
     depends_on:
       - kafka
       - mosquitto
