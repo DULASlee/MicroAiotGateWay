@@ -40,21 +40,12 @@ internal sealed class HttpTelemetrySender
 
             var response = await client.PostAsync(endpoint, content, ct);
 
-            if (response.StatusCode == HttpStatusCode.Accepted)
-                return SendResult.Success;
-            if (response.StatusCode == HttpStatusCode.ServiceUnavailable)
-                return SendResult.RetryableFailure;
-            if ((int)response.StatusCode >= 400 && (int)response.StatusCode < 500)
-                return SendResult.FatalFailure;
+            if (response.StatusCode == HttpStatusCode.Accepted) return SendResult.Success;
+            if (response.StatusCode == HttpStatusCode.ServiceUnavailable) return SendResult.RetryableFailure;
+            if ((int)response.StatusCode >= 400 && (int)response.StatusCode < 500) return SendResult.FatalFailure;
             return SendResult.RetryableFailure;
         }
-        catch (TaskCanceledException)
-        {
-            return SendResult.RetryableFailure;
-        }
-        catch (HttpRequestException)
-        {
-            return SendResult.RetryableFailure;
-        }
+        catch (TaskCanceledException) { return SendResult.RetryableFailure; }
+        catch (HttpRequestException) { return SendResult.RetryableFailure; }
     }
 }

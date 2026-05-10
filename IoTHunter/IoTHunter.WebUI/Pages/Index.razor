@@ -1,0 +1,71 @@
+@page "/"
+@using IoTHunter.WebUI.Services
+@inject ManagementApiClient ManagementApi
+@inject NavigationManager Navigation
+
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-4">
+            <div class="card shadow">
+                <div class="card-body">
+                    <h3 class="card-title text-center mb-4">IoTHunter 运营控制台</h3>
+                    <div class="mb-3">
+                        <label class="form-label">用户名</label>
+                        <input @bind="username" class="form-control" placeholder="请输入用户名" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">密码</label>
+                        <input @bind="password" type="password" class="form-control" placeholder="请输入密码" />
+                    </div>
+                    @if (isLoading)
+                    {
+                        <button class="btn btn-primary w-100" disabled>
+                            <span class="spinner-border spinner-border-sm me-2"></span>登录中...
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-primary w-100" @onclick="Login">登录</button>
+                    }
+                    @if (!string.IsNullOrEmpty(error))
+                    {
+                        <div class="alert alert-danger mt-3">@error</div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string username = "admin";
+    private string password = "admin123";
+    private string? error;
+    private bool isLoading;
+
+    private async Task Login()
+    {
+        isLoading = true;
+        error = null;
+        try
+        {
+            var success = await ManagementApi.LoginAsync(username, password);
+            if (success)
+            {
+                Navigation.NavigateTo("/dashboard");
+            }
+            else
+            {
+                error = "登录失败，请检查用户名和密码";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = $"连接失败: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+}

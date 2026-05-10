@@ -1,0 +1,132 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mosquitto
+  namespace: iothunter
+  labels:
+    app: mosquitto
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mosquitto
+  template:
+    metadata:
+      labels:
+        app: mosquitto
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1883
+        fsGroup: 1883
+      containers:
+      - name: mosquitto
+        image: eclipse-mosquitto:2.0.18
+        ports:
+        - containerPort: 1883
+          name: mqtt
+        - containerPort: 8083
+          name: websocket
+        volumeMounts:
+        - name: mosquitto-conf
+          mountPath: /mosquitto/config/mosquitto.conf
+          subPath: mosquitto.conf
+        - name: mosquitto-password
+          mountPath: /mosquitto/config/passwordfile
+          subPath: passwordfile
+        - name: mosquitto-acl
+          mountPath: /mosquitto/config/aclfile
+          subPath: aclfile
+        - name: data
+          mountPath: /mosquitto/data
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop: ["ALL"]
+        startupProbe:
+          tcpSocket:
+            port: 1883
+          failureThreshold: 12
+          periodSeconds: 5
+        livenessProbe:
+          exec:
+            command:
+            - mosquitto_sub
+            - -h
+            - localhost
+            - -t
+            - $$SYS/broker/version
+            - -C
+            - "1"
+            - -W
+            - "2"
+            - -u
+            - healthcheck
+            - -P
+            - healthcheckpass
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - mosquitto_sub
+            - -h
+            - localhost
+            - -t
+            - $$SYS/broker/version
+            - -C
+            - "1"
+            - -W
+            - "2"
+            - -u
+            - healthcheck
+            - -P
+            - healthcheckpass
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+      volumes:
+      - name: mosquitto-conf
+        secret:
+          secretName: mosquitto-config
+          items:
+          - key: mosquitto.conf
+            path: mosquitto.conf
+      - name: mosquitto-password
+        secret:
+          secretName: mosquitto-config
+          items:
+          - key: passwordfile
+            path: passwordfile
+      - name: mosquitto-acl
+        secret:
+          secretName: mosquitto-config
+          items:
+          - key: aclfile
+            path: aclfile
+      - name: data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mosquitto
+  namespace: iothunter
+spec:
+  selector:
+    app: mosquitto
+  ports:
+  - port: 1883
+    targetPort: 1883
+    name: mqtt
+  - port: 8083
+    targetPort: 8083
+    name: websocket

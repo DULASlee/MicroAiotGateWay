@@ -5,22 +5,22 @@ namespace BackendProcessor.Infrastructure.Health;
 
 internal sealed class RedisHealthCheck : IHealthCheck
 {
-    private readonly ConnectionMultiplexer _redis;
+    private readonly IConnectionMultiplexer _redis;
 
-    public RedisHealthCheck(ConnectionMultiplexer redis) => _redis = redis;
+    public RedisHealthCheck(IConnectionMultiplexer redis) => _redis = redis;
 
-    public async Task<HealthCheckResult> CheckHealthAsync(
-        HealthCheckContext context, CancellationToken ct)
+    public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context,
+        CancellationToken cancellationToken = default)
     {
         try
         {
             var db = _redis.GetDatabase();
             await db.PingAsync();
-            return HealthCheckResult.Healthy();
+            return HealthCheckResult.Healthy("Redis reachable");
         }
         catch (Exception ex)
         {
-            return HealthCheckResult.Unhealthy("Redis unavailable", ex);
+            return HealthCheckResult.Unhealthy("Redis ping failed", ex);
         }
     }
 }

@@ -1,0 +1,115 @@
+@page "/dashboard"
+@using IoTHunter.WebUI.Services
+@inject SimulatorApiClient SimulatorApi
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<div class="container-fluid">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark rounded mb-4">
+        <div class="container-fluid">
+            <span class="navbar-brand">IoTHunter 运营控制台</span>
+            <div class="navbar-nav">
+                <a class="nav-link active" href="/dashboard">监控大屏</a>
+                <a class="nav-link" href="/devices">设备管理</a>
+                <a class="nav-link" href="/traces">链路追踪</a>
+                <a class="nav-link" href="/loadtest">压测指挥中心</a>
+            </div>
+        </div>
+    </nav>
+
+    @if (error != null)
+    {
+        <div class="alert alert-danger">@error</div>
+    }
+
+    <div class="row mt-4">
+        <div class="col-md-3">
+            <div class="card text-white bg-primary shadow">
+                <div class="card-body text-center">
+                    <h5>在线设备</h5>
+                    <h2>@deviceCount</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-success shadow">
+                <div class="card-body text-center">
+                    <h5>当前 QPS</h5>
+                    <h2>@qps.ToString("F1")</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-info shadow">
+                <div class="card-body text-center">
+                    <h5>成功率</h5>
+                    <h2>@successRate.ToString("F2")%</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-warning shadow">
+                <div class="card-body text-center">
+                    <h5>P99 延迟</h5>
+                    <h2>@p99.ToString("F1") ms</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private double qps, successRate, p99;
+    private int deviceCount;
+    private string? error;
+    private CancellationTokenSource? cts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        cts = new CancellationTokenSource();
+        _ = PollSnapshotAsync(cts.Token);
+    }
+
+    private async Task PollSnapshotAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                var snapshot = await SimulatorApi.GetSnapshotAsync();
+                var config = await SimulatorApi.GetConfigAsync();
+
+                await InvokeAsync(() =>
+                {
+                    if (snapshot is not null)
+                    {
+                        qps = snapshot.Qps;
+                        successRate = snapshot.SuccessRate;
+                        p99 = snapshot.LatencyP99Ms;
+                    }
+                    if (config is not null)
+                    {
+                        deviceCount = config.DeviceCount;
+                    }
+                    error = null;
+                    StateHasChanged();
+                });
+            }
+            catch (Exception ex)
+            {
+                await InvokeAsync(() =>
+                {
+                    error = $"数据获取失败: {ex.Message}";
+                    StateHasChanged();
+                });
+            }
+            await Task.Delay(2000, ct);
+        }
+    }
+
+    public void Dispose()
+    {
+        cts?.Cancel();
+        cts?.Dispose();
+    }
+}

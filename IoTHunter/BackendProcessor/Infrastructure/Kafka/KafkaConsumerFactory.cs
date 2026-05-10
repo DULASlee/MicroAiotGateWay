@@ -1,24 +1,19 @@
-using BackendProcessor.Infrastructure.Options;
 using Confluent.Kafka;
 
 namespace BackendProcessor.Infrastructure.Kafka;
 
-internal static class KafkaConsumerFactory
+internal sealed class KafkaConsumerFactory
 {
-    public static IConsumer<Null, string> Create(KafkaConsumerOptions options)
+    public IConsumer<Null, string> CreateConsumer(string bootstrapServers, string groupId)
     {
         var config = new ConsumerConfig
         {
-            BootstrapServers = options.BootstrapServers,
-            GroupId = options.GroupId,
-            AutoOffsetReset = AutoOffsetReset.Earliest,
+            BootstrapServers = bootstrapServers,
+            GroupId = groupId,
             EnableAutoCommit = false,
             EnableAutoOffsetStore = false,
-            MaxPollIntervalMs = 300_000,
-            SessionTimeoutMs = 30_000,
-            HeartbeatIntervalMs = 3_000
+            AutoOffsetReset = AutoOffsetReset.Earliest
         };
-
         return new ConsumerBuilder<Null, string>(config).Build();
     }
 }

@@ -1,0 +1,138 @@
+@page "/loadtest"
+@using IoTHunter.WebUI.Services
+@inject SimulatorApiClient SimulatorApi
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<div class="container-fluid">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark rounded mb-4">
+        <div class="container-fluid">
+            <span class="navbar-brand">IoTHunter</span>
+            <div class="navbar-nav">
+                <a class="nav-link" href="/dashboard">监控大屏</a>
+                <a class="nav-link" href="/devices">设备管理</a>
+                <a class="nav-link" href="/traces">链路追踪</a>
+                <a class="nav-link active" href="/loadtest">压测指挥中心</a>
+            </div>
+        </div>
+    </nav>
+
+    <h3>压测指挥中心</h3>
+
+    @if (error != null)
+    {
+        <div class="alert alert-danger">@error</div>
+    }
+
+    @if (snapshot != null)
+    {
+        <div class="row mt-4">
+            <div class="col-md-3">
+                <div class="card text-white bg-primary shadow">
+                    <div class="card-body text-center">
+                        <h5>总发送</h5>
+                        <h2>@(snapshot.TotalSent + snapshot.TotalFailed)</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-white bg-success shadow">
+                    <div class="card-body text-center">
+                        <h5>成功</h5>
+                        <h2>@snapshot.TotalSent</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-white bg-danger shadow">
+                    <div class="card-body text-center">
+                        <h5>失败</h5>
+                        <h2>@snapshot.TotalFailed</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-white bg-info shadow">
+                    <div class="card-body text-center">
+                        <h5>当前 QPS</h5>
+                        <h2>@snapshot.Qps.ToString("F1")</h2>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row mt-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">延迟分布</div>
+                    <div class="card-body">
+                        <table class="table table-sm">
+                            <tr><td>P99</td><td class="fw-bold">@snapshot.LatencyP99Ms.ToString("F1") ms</td></tr>
+                            <tr><td>Max</td><td>@snapshot.LatencyMaxMs.ToString("F1") ms</td></tr>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">压测配置</div>
+                    <div class="card-body text-center">
+                        <h2>@(config?.DurationSeconds ?? 0) 秒</h2>
+                        <p class="text-muted small mb-0">IntervalMs=@(config?.IntervalMs ?? 0) &middot; Concurrency=@(config?.Concurrency ?? 0)</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="mt-2 text-muted">数据每 2 秒自动刷新</div>
+    }
+    else
+    {
+        <div class="alert alert-info">等待 Simulator 数据...</div>
+    }
+</div>
+
+@code {
+    private SimulatorSnapshot? snapshot;
+    private SimulatorConfig? config;
+    private string? error;
+    private CancellationTokenSource? cts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        cts = new CancellationTokenSource();
+        _ = PollLoopAsync(cts.Token);
+    }
+
+    private async Task PollLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                var snap = await SimulatorApi.GetSnapshotAsync();
+                var cfg = await SimulatorApi.GetConfigAsync();
+                await InvokeAsync(() =>
+                {
+                    snapshot = snap;
+                    config = cfg;
+                    error = null;
+                    StateHasChanged();
+                });
+            }
+            catch (Exception ex)
+            {
+                await InvokeAsync(() =>
+                {
+                    error = $"数据获取失败: {ex.Message}";
+                    StateHasChanged();
+                });
+            }
+            await Task.Delay(2000, ct);
+        }
+    }
+
+    public void Dispose()
+    {
+        cts?.Cancel();
+        cts?.Dispose();
+    }
+}

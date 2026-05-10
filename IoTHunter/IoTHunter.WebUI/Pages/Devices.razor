@@ -1,0 +1,73 @@
+@page "/devices"
+@using IoTHunter.WebUI.Services
+@inject ManagementApiClient ManagementApi
+@inject NavigationManager Navigation
+
+<div class="container-fluid">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark rounded mb-4">
+        <div class="container-fluid">
+            <span class="navbar-brand">IoTHunter</span>
+            <div class="navbar-nav">
+                <a class="nav-link" href="/dashboard">监控大屏</a>
+                <a class="nav-link active" href="/devices">设备管理</a>
+                <a class="nav-link" href="/traces">链路追踪</a>
+                <a class="nav-link" href="/loadtest">压测指挥中心</a>
+            </div>
+        </div>
+    </nav>
+
+    <h3>设备接入面板</h3>
+
+    @if (error != null)
+    {
+        <div class="alert alert-danger">@error</div>
+    }
+
+    @if (gatewayStatus != null)
+    {
+        <div class="row mt-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">网关配置</div>
+                    <div class="card-body">
+                        <pre class="bg-light p-3 rounded">@gatewayJson</pre>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">设备默认凭证</div>
+                    <div class="card-body">
+                        <pre class="bg-light p-3 rounded">@credentialsJson</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private GatewayStatus? gatewayStatus;
+    private string? error;
+    private string gatewayJson = "";
+    private string credentialsJson = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            gatewayStatus = await ManagementApi.GetGatewayStatusAsync();
+            if (gatewayStatus is not null)
+            {
+                gatewayJson = System.Text.Json.JsonSerializer.Serialize(gatewayStatus.Gateway,
+                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                credentialsJson = System.Text.Json.JsonSerializer.Serialize(gatewayStatus.DefaultDeviceCredentials,
+                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            }
+        }
+        catch (Exception ex)
+        {
+            error = $"获取网关状态失败: {ex.Message}";
+        }
+    }
+}

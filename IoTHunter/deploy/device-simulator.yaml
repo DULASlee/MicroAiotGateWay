@@ -1,0 +1,127 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: device-simulator
+  namespace: iothunter
+  labels:
+    app: device-simulator
+  annotations:
+    prometheus.io/port: "9464"
+    prometheus.io/scrape: "true"
+spec:
+  selector:
+    app: device-simulator
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+  - port: 9464
+    targetPort: 9464
+    name: metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: device-simulator
+  namespace: iothunter
+  labels:
+    app: device-simulator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: device-simulator
+  template:
+    metadata:
+      labels:
+        app: device-simulator
+      annotations:
+        prometheus.io/port: "9464"
+        prometheus.io/scrape: "true"
+    spec:
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      containers:
+      - name: device-simulator
+        image: device-simulator:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+          name: http
+        - containerPort: 9464
+          name: metrics
+        env:
+        - name: ASPNETCORE_URLS
+          value: "http://+:80;http://+:9464"
+        - name: Simulator__Protocol
+          value: "http"
+        - name: Simulator__GatewayHttpBase
+          value: "http://iot-gateway.iothunter.svc.cluster.local"
+        - name: Simulator__MqttBroker
+          value: host.docker.internal
+        - name: Simulator__MqttPort
+          value: "1883"
+        - name: Simulator__MqttUsername
+          valueFrom:
+            secretKeyRef:
+              name: mqtt-credentials
+              key: simulator-username
+              optional: true
+        - name: Simulator__MqttPassword
+          valueFrom:
+            secretKeyRef:
+              name: mqtt-credentials
+              key: simulator-password
+              optional: true
+        - name: Simulator__DeviceCount
+          value: "5"
+        - name: Simulator__IntervalMs
+          value: "500"
+        - name: Simulator__Concurrency
+          value: "2"
+        - name: Simulator__DurationSeconds
+          value: "0"
+        - name: Simulator__ProxyUrl
+          value: ""
+        - name: OpenTelemetry__OtlpEndpoint
+          value: ""
+        startupProbe:
+          httpGet:
+            path: /api/simulator/health
+            port: 80
+          failureThreshold: 30
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: 9464
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /api/simulator/health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 64Mi
+          limits:
+            cpu: "1"
+            memory: 128Mi
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp

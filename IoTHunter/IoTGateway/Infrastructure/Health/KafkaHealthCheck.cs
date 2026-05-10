@@ -12,8 +12,8 @@ internal sealed class KafkaHealthCheck : IHealthCheck
         _producer = producer;
     }
 
-    public Task<HealthCheckResult> CheckHealthAsync(
-        HealthCheckContext context, CancellationToken ct = default)
+    public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -22,7 +22,7 @@ internal sealed class KafkaHealthCheck : IHealthCheck
         }
         catch (Exception ex)
         {
-            return Task.FromResult(HealthCheckResult.Unhealthy("Kafka unreachable", ex));
+            return Task.FromResult(HealthCheckResult.Unhealthy("Kafka ping failed", ex));
         }
     }
 }

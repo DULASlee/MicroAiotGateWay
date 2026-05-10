@@ -1,0 +1,96 @@
+@page "/traces"
+@using IoTHunter.WebUI.Services
+@inject BackendProcessorApiClient BackendApi
+@inject NavigationManager Navigation
+
+<div class="container-fluid">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark rounded mb-4">
+        <div class="container-fluid">
+            <span class="navbar-brand">IoTHunter</span>
+            <div class="navbar-nav">
+                <a class="nav-link" href="/dashboard">监控大屏</a>
+                <a class="nav-link" href="/devices">设备管理</a>
+                <a class="nav-link active" href="/traces">链路追踪</a>
+                <a class="nav-link" href="/loadtest">压测指挥中心</a>
+            </div>
+        </div>
+    </nav>
+
+    <h3>全链路追踪浏览器</h3>
+
+    <div class="row mt-3">
+        <div class="col-md-4">
+            <div class="input-group">
+                <input @bind="searchDeviceId" class="form-control" placeholder="输入设备 ID" />
+                <button class="btn btn-primary" @onclick="SearchTraces" disabled="@isLoading">
+                    @(isLoading ? "搜索中..." : "搜索")
+                </button>
+            </div>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <div class="alert alert-danger mt-3">@error</div>
+    }
+
+    @if (traces != null && traces.Count > 0)
+    {
+        <div class="mt-4">
+            <h5>找到 @traces.Count 条 Trace</h5>
+            @foreach (var trace in traces)
+            {
+                <div class="card mt-2">
+                    <div class="card-header">
+                        Trace ID: <code>@trace.TraceId</code>
+                    </div>
+                    <div class="card-body">
+                        <table class="table table-sm">
+                            <thead><tr><th>操作</th><th>耗时 (ms)</th></tr></thead>
+                            <tbody>
+                                @foreach (var seg in trace.Segments)
+                                {
+                                    var color = seg.DurationMs > 100 ? "text-danger" : seg.DurationMs > 50 ? "text-warning" : "text-success";
+                                    <tr>
+                                        <td>@seg.OperationName</td>
+                                        <td class="@color fw-bold">@seg.DurationMs.ToString("F1")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+    else if (traces != null)
+    {
+        <div class="alert alert-info mt-3">未找到该设备的 Trace 记录</div>
+    }
+</div>
+
+@code {
+    private string searchDeviceId = "demo-http";
+    private List<TraceSummary>? traces;
+    private string? error;
+    private bool isLoading;
+
+    private async Task SearchTraces()
+    {
+        isLoading = true;
+        error = null;
+        traces = null;
+        try
+        {
+            traces = await BackendApi.GetTracesAsync(searchDeviceId);
+        }
+        catch (Exception ex)
+        {
+            error = $"查询失败: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+}

@@ -2,6 +2,7 @@ using BackendProcessor.Infrastructure.Health;
 using BackendProcessor.Infrastructure.Kafka;
 using BackendProcessor.Infrastructure.Options;
 using BackendProcessor.Hubs;
+using BackendProcessor.Workers;
 using IoTHunter.Infrastructure;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -13,30 +14,27 @@ using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ---- 1. Serilog ----
+// Serilog
 builder.Host.UseSerilog((context, services, configuration) =>
-{
-    LoggingDefaults.ConfigureBaseLogger(configuration);
-});
+    LoggingDefaults.ConfigureBaseLogger(configuration));
 
-// ---- 2. Data Sources ----
+// Data Sources (BP-1)
 var csPg = builder.Configuration.GetConnectionString("Postgres")!;
 builder.Services.AddSingleton(NpgsqlDataSource.Create(csPg));
 
 var csRedis = builder.Configuration.GetConnectionString("Redis")!;
-builder.Services.AddSingleton(ConnectionMultiplexer.Connect(csRedis));
+builder.Services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(csRedis));
 
-var kafkaBootstrap = builder.Configuration["Kafka:BootstrapServers"] ?? throw new InvalidOperationException("Kafka:BootstrapServers is required");
+var kafkaBootstrap = builder.Configuration["Kafka:BootstrapServers"]!;
 
-// ---- 3. DLQ Producer (shared) ----
+// DLQ
 builder.Services.AddSingleton(sp =>
 {
     var logger = sp.GetRequiredService<ILogger<KafkaDlqProducer>>();
     return new KafkaDlqProducer(kafkaBootstrap, logger);
 });
 
-// ---- 4. Kafka Consumer Workers ----
-
+// Consumers
 builder.Services.AddSingleton(sp =>
 {
     var section = builder.Configuration.GetSection("Kafka:Consumers:Persistence");
@@ -57,25 +55,13 @@ builder.Services.AddSingleton(sp =>
     opts.BootstrapServers = kafkaBootstrap;
     return new LatestValueProjectionWorker(
         opts,
-        sp.GetRequiredService<ConnectionMultiplexer>(),
+        sp.GetRequiredService<IConnectionMultiplexer>(),
         sp.GetRequiredService<KafkaDlqProducer>(),
         sp.GetRequiredService<ILogger<LatestValueProjectionWorker>>());
 });
 builder.Services.AddHostedService(sp => sp.GetRequiredService<LatestValueProjectionWorker>());
 
-builder.Services.AddSingleton(sp =>
-{
-    var section = builder.Configuration.GetSection("Kafka:Consumers:TimeseriesProjection");
-    var opts = section.Get<KafkaConsumerOptions>()!;
-    opts.BootstrapServers = kafkaBootstrap;
-    return new TimeseriesProjectionWorker(
-        opts, sp.GetRequiredService<IConfiguration>(),
-        sp.GetRequiredService<KafkaDlqProducer>(),
-        sp.GetRequiredService<ILogger<TimeseriesProjectionWorker>>());
-});
-builder.Services.AddHostedService(sp => sp.GetRequiredService<TimeseriesProjectionWorker>());
-
-// ---- 4. Controllers ----
+// Controllers + SignalR
 builder.Services.AddControllers();
 builder.Services.AddSignalR();
 builder.Services.AddHttpClient("JaegerClient", client =>
@@ -83,24 +69,23 @@ builder.Services.AddHttpClient("JaegerClient", client =>
     client.Timeout = TimeSpan.FromSeconds(10);
 });
 
-// ---- 5. Health Checks ----
+// Health Checks
 builder.Services.AddHealthChecks()
     .AddCheck<PostgresHealthCheck>("postgres", failureStatus: HealthStatus.Unhealthy, tags: ["db"])
     .AddCheck<RedisHealthCheck>("redis", failureStatus: HealthStatus.Unhealthy, tags: ["cache"]);
 
-// ---- 5. OTel ----
+// OTel
 builder.Services
     .AddIoTHunterOpenTelemetry(builder.Configuration, "BackendProcessor")
     .WithTracing(tracing => tracing
         .AddAspNetCoreInstrumentation()
         .AddSource("BackendProcessor.Persistence")
-        .AddSource("BackendProcessor.LatestProjection")
-        .AddSource("BackendProcessor.TimeseriesProjection"))
+        .AddSource("BackendProcessor.LatestProjection"))
     .WithMetrics(metrics => metrics
         .AddAspNetCoreInstrumentation()
         .AddPrometheusExporter());
 
-// ---- 6. Host Options ----
+// Host
 builder.Services.Configure<HostOptions>(options =>
 {
     options.ShutdownTimeout = TimeSpan.FromSeconds(45);
@@ -131,7 +116,6 @@ app.MapHealthChecks("/health/ready", new()
         await context.Response.WriteAsync(json);
     }
 });
-
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 
 app.Run();

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -75,7 +76,6 @@ internal sealed partial class MqttIngestionService : BackgroundService
                 var completed = await Task.WhenAny(disconnectTcs.Task, Task.Delay(Timeout.Infinite, stoppingToken));
                 if (completed == disconnectTcs.Task)
                 {
-                    // Disconnected — clean up and loop back to reconnect
                     _logger.LogWarning("MQTT disconnected, reconnecting...");
                 }
                 await DisposeClientAsync(client);
@@ -117,7 +117,7 @@ internal sealed partial class MqttIngestionService : BackgroundService
     {
         var clientOptionsBuilder = new MqttClientOptionsBuilder()
             .WithTcpServer(_mqttOptions.TcpServer, _mqttOptions.TcpPort)
-            .WithClientId(_mqttOptions.ClientId)
+            .WithClientId($"{_mqttOptions.ClientId}-{Random.Shared.Next(1000, 9999)}")
             .WithCleanSession(false)
             .WithKeepAlivePeriod(TimeSpan.FromSeconds(30));
 
@@ -172,7 +172,8 @@ internal sealed partial class MqttIngestionService : BackgroundService
             if (!System.ComponentModel.DataAnnotations.Validator.TryValidateObject(
                     request, validationContext, validationResults, validateAllProperties: true))
             {
-                _logger.LogWarning("MQTT rejected: validation failed {Errors}", string.Join("; ", validationResults));
+                _logger.LogWarning("MQTT rejected: validation failed {Errors}",
+                    string.Join("; ", validationResults));
                 _metrics.RecordRejection("mqtt", "validation_failed");
                 return;
             }
@@ -188,7 +189,8 @@ internal sealed partial class MqttIngestionService : BackgroundService
             _metrics.RecordRequest("mqtt", kafkaTopic, "success");
             _metrics.RecordMqttMessage(topic, isCritical ? "qos1" : "qos0");
 
-            _logger.LogInformation("MQTT→Kafka {EventId} device={DeviceId} topic={MqttTopic}→{KafkaTopic} reliability={Level}",
+            _logger.LogInformation(
+                "MQTT→Kafka {EventId} device={DeviceId} topic={MqttTopic}→{KafkaTopic} reliability={Level}",
                 envelope.EventId, deviceId, topic, kafkaTopic, reliability);
         }
         catch (Exception ex)

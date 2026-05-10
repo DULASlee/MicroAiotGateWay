@@ -5,21 +5,19 @@ namespace IoTGateway.Infrastructure.Health;
 
 internal sealed class MqttHealthCheck : IHealthCheck
 {
-    private readonly MqttIngestionService _mqttService;
+    private readonly MqttIngestionService _mqtt;
 
-    public MqttHealthCheck(MqttIngestionService mqttService)
+    public MqttHealthCheck(MqttIngestionService mqtt)
     {
-        _mqttService = mqttService;
+        _mqtt = mqtt;
     }
 
-    public Task<HealthCheckResult> CheckHealthAsync(
-        HealthCheckContext context, CancellationToken ct = default)
+    public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context,
+        CancellationToken cancellationToken = default)
     {
-        if (_mqttService.IsConnected)
-        {
-            return Task.FromResult(HealthCheckResult.Healthy("MQTT broker connected"));
-        }
+        if (_mqtt.IsConnected)
+            return Task.FromResult(HealthCheckResult.Healthy("MQTT connected"));
 
-        return Task.FromResult(HealthCheckResult.Unhealthy("MQTT broker disconnected"));
+        return Task.FromResult(HealthCheckResult.Unhealthy("MQTT disconnected"));
     }
 }

@@ -1,0 +1,62 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iothunter-webui
+  namespace: iothunter
+spec:
+  selector:
+    app: iothunter-webui
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iothunter-webui
+  namespace: iothunter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iothunter-webui
+  template:
+    metadata:
+      labels:
+        app: iothunter-webui
+    spec:
+      containers:
+      - name: webui
+        image: iothunter-webui:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: ASPNETCORE_URLS
+          value: http://+:80
+        - name: Kestrel__Endpoints__Http__Url
+          value: http://+:80
+        - name: ApiEndpoints__ManagementBaseUrl
+          value: "http://iothunter-management.iothunter.svc.cluster.local"
+        - name: ApiEndpoints__BackendProcessorBaseUrl
+          value: "http://backend-processor.iothunter.svc.cluster.local"
+        - name: ApiEndpoints__DeviceSimulatorBaseUrl
+          value: "http://device-simulator.iothunter.svc.cluster.local"
+        - name: ApiEndpoints__JaegerQueryUrl
+          value: "http://jaeger-query.iothunter.svc.cluster.local:16686"
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 15
+          periodSeconds: 30

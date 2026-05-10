@@ -10,46 +10,54 @@ namespace DeviceSimulator.Infrastructure;
 internal sealed class MqttTelemetrySender : IAsyncDisposable
 {
     private readonly ILogger<MqttTelemetrySender> _logger;
+    private readonly string _broker;
+    private readonly int _port;
+    private readonly string? _username;
+    private readonly string? _password;
     private IMqttClient? _client;
 
     public bool IsConnected => _client?.IsConnected ?? false;
 
-    public MqttTelemetrySender(ILogger<MqttTelemetrySender> logger)
+    public MqttTelemetrySender(string broker, int port, string? username, string? password, ILogger<MqttTelemetrySender> logger)
     {
+        _broker = broker;
+        _port = port;
+        _username = username;
+        _password = password;
         _logger = logger;
     }
 
-    public async Task EnsureConnectedAsync(string broker, int port, string clientIdPrefix, CancellationToken ct)
+    public async Task EnsureConnectedAsync(string clientIdPrefix, CancellationToken ct)
     {
         if (_client?.IsConnected == true) return;
 
         var factory = new MqttClientFactory();
         _client = factory.CreateMqttClient();
-
-        // ADR-016: 普通压测使用随机 ClientId
         var clientId = $"{clientIdPrefix}-{Guid.NewGuid():N}";
 
-        var options = new MqttClientOptionsBuilder()
-            .WithTcpServer(broker, port)
+        var optionsBuilder = new MqttClientOptionsBuilder()
+            .WithTcpServer(_broker, _port)
             .WithClientId(clientId)
-            .WithCleanSession(false)       // ADR-015: 持久会话
-            .Build();
+            .WithCleanSession(false);
 
-        await _client.ConnectAsync(options, ct);
+        if (!string.IsNullOrWhiteSpace(_username))
+        {
+            optionsBuilder.WithCredentials(_username, _password);
+        }
+
+        await _client.ConnectAsync(optionsBuilder.Build(), ct);
         _logger.LogInformation("MQTT Simulator connected as {ClientId}", clientId);
     }
 
     public async Task<SendResult> SendAsync(TelemetryEnvelope envelope, CancellationToken ct)
     {
-        if (_client is null || !_client.IsConnected)
-            return SendResult.FatalFailure;
+        if (_client is null || !_client.IsConnected) return SendResult.FatalFailure;
 
         var isCritical = envelope.ReliabilityLevel == ReliabilityLevel.Critical;
         var topic = isCritical
             ? $"device/{envelope.DeviceId}/event/critical"
             : $"device/{envelope.DeviceId}/telemetry";
 
-        // 终审修复#2: Payload 严格对齐网关 TelemetryRequest 结构
         var payload = JsonSerializer.Serialize(new
         {
             deviceId = envelope.DeviceId,
@@ -62,10 +70,7 @@ internal sealed class MqttTelemetrySender : IAsyncDisposable
         var message = new MqttApplicationMessageBuilder()
             .WithTopic(topic)
             .WithPayload(payload)
-            // ADR-014: 关键事件 QoS 1，普通遥测 QoS 0
-            .WithQualityOfServiceLevel(isCritical
-                ? MqttQualityOfServiceLevel.AtLeastOnce
-                : MqttQualityOfServiceLevel.AtMostOnce)
+            .WithQualityOfServiceLevel(isCritical ? MqttQualityOfServiceLevel.AtLeastOnce : MqttQualityOfServiceLevel.AtMostOnce)
             .Build();
 
         try
@@ -84,8 +89,7 @@ internal sealed class MqttTelemetrySender : IAsyncDisposable
     {
         if (_client is not null)
         {
-            if (_client.IsConnected)
-                await _client.DisconnectAsync();
+            if (_client.IsConnected) await _client.DisconnectAsync();
             _client.Dispose();
         }
     }

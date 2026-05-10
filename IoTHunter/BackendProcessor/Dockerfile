@@ -1,27 +1,13 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
+COPY . .
+RUN dotnet publish BackendProcessor/BackendProcessor.csproj -c Release -o /app
 
-COPY IoTHunter.Shared/ IoTHunter.Shared/
-COPY IoTHunter.Infrastructure/ IoTHunter.Infrastructure/
-COPY BackendProcessor/ BackendProcessor/
-
-WORKDIR /src/BackendProcessor
-RUN dotnet restore BackendProcessor.csproj
-RUN dotnet publish BackendProcessor.csproj -c Release -o /app/publish --no-restore
-
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
-WORKDIR /app
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=build /app .
+ENV ASPNETCORE_URLS=http://+:80
 EXPOSE 80
 EXPOSE 9464
-
-ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
-ENV DOTNET_EnableDiagnostics=0
-ENV ASPNETCORE_URLS=http://+:80
-ENV OpenTelemetry__OtlpEndpoint=http://otel-collector:4317
-ENV Kafka__BootstrapServers=kafka:9092
-ENV ConnectionStrings__Postgres=Host=postgres;Database=IoTHunter;Username=iotapp;Password=changeme
-ENV ConnectionStrings__Redis=redis:6379
-
-COPY --from=build /app/publish .
 ENTRYPOINT ["dotnet", "BackendProcessor.dll"]

@@ -9,4 +9,5 @@ WORKDIR /app
 COPY --from=build /app .
 ENV ASPNETCORE_URLS=http://+:80
 EXPOSE 80
+EXPOSE 9464
 ENTRYPOINT ["dotnet", "IoTGateway.dll"]

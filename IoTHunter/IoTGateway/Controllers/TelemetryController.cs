@@ -20,66 +20,40 @@ public sealed class TelemetryController : ControllerBase
     }
 
     [HttpPost("telemetry")]
-    public async Task<IActionResult> PostTelemetry([FromBody] TelemetryRequest request, CancellationToken ct)
+    public async Task<IActionResult> PostTelemetry([FromBody] TelemetryRequest request)
     {
-        if (!ModelState.IsValid)
-        {
-            _metrics.RecordRejection("http", "validation_failed");
-            return BadRequest(ModelState);
-        }
-
         var envelope = TelemetryEnvelopeMapper.ToEnvelope(request, ReliabilityLevel.BestEffort);
         var topic = ReliabilityConfiguration.KafkaTopics[ReliabilityLevel.BestEffort];
-        return await ProduceAndRespondAsync(topic, envelope, "http", ct);
+        return await ProduceAndRespondAsync(topic, envelope, "http");
     }
 
     [HttpPost("events/critical")]
-    public async Task<IActionResult> PostCritical([FromBody] TelemetryRequest request, CancellationToken ct)
+    public async Task<IActionResult> PostCriticalEvent([FromBody] TelemetryRequest request)
     {
-        if (!ModelState.IsValid)
-        {
-            _metrics.RecordRejection("http", "validation_failed");
-            return BadRequest(ModelState);
-        }
-
         var envelope = TelemetryEnvelopeMapper.ToEnvelope(request, ReliabilityLevel.Critical);
         var topic = ReliabilityConfiguration.KafkaTopics[ReliabilityLevel.Critical];
-        return await ProduceAndRespondAsync(topic, envelope, "http", ct);
+        return await ProduceAndRespondAsync(topic, envelope, "http");
     }
 
-    private async Task<IActionResult> ProduceAndRespondAsync(
-        string topic, TelemetryEnvelope envelope, string protocol, CancellationToken ct)
+    private async Task<IActionResult> ProduceAndRespondAsync(string topic,
+        TelemetryEnvelope envelope, string protocol)
     {
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            var result = await _producer.ProduceAsync(topic, envelope, ct);
-            stopwatch.Stop();
-
-            _metrics.RecordKafkaLatency(topic, stopwatch.Elapsed.TotalMilliseconds);
+            var result = await _producer.ProduceAsync(topic, envelope);
             _metrics.RecordRequest(protocol, topic, "success");
-
+            _metrics.RecordKafkaLatency(topic, 0);
             return Accepted(new
             {
                 eventId = envelope.EventId,
-                status = "accepted",
                 kafkaPartition = result.Partition.Value,
-                kafkaOffset = result.Offset.Value,
-                latencyMs = stopwatch.ElapsedMilliseconds
+                kafkaOffset = result.Offset.Value
             });
         }
         catch (Exception)
         {
-            stopwatch.Stop();
-            _metrics.RecordRequest(protocol, topic, "failure");
             _metrics.RecordRejection(protocol, "kafka_unavailable");
-
-            return StatusCode(503, new
-            {
-                eventId = envelope.EventId,
-                status = "unavailable",
-                reason = "Kafka producer unavailable or circuit breaker open"
-            });
+            return StatusCode(503, new { status = "unavailable", message = "Kafka not reachable" });
         }
     }
 }

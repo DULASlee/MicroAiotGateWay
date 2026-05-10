@@ -35,7 +35,7 @@ services:
       context: .
       dockerfile: IoTGateway/Dockerfile
     ports:
-      - "5080:5080"
+      - "5080:80"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       Kafka__BootstrapServers: kafka:9092
@@ -50,11 +50,27 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: iothunter
-      POSTGRES_USER: iothunter
-      POSTGRES_PASSWORD: iothunter123
+      POSTGRES_DB: IoTHunter
+      POSTGRES_USER: iotapp
+      POSTGRES_PASSWORD: changeme
 
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+
+  backend-processor:
+    build:
+      context: .
+      dockerfile: BackendProcessor/Dockerfile
+    ports:
+      - "5081:80"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      Kafka__BootstrapServers: kafka:9092
+      ConnectionStrings__Postgres: Host=postgres;Database=IoTHunter;Username=iotapp;Password=changeme
+      ConnectionStrings__Redis: redis:6379
+    depends_on:
+      - kafka
+      - postgres
+      - redis

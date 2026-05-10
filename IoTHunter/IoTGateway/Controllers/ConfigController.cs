@@ -6,15 +6,15 @@ namespace IoTGateway.Controllers;
 
 [ApiController]
 [Route("api/v1")]
-public class ConfigController : ControllerBase
+public sealed class ConfigController : ControllerBase
 {
-    private readonly MqttOptions _mqttOptions;
-    private readonly KafkaOptions _kafkaOptions;
+    private readonly MqttOptions _mqtt;
+    private readonly KafkaOptions _kafka;
 
-    public ConfigController(MqttOptions mqttOptions, KafkaOptions kafkaOptions)
+    public ConfigController(MqttOptions mqtt, KafkaOptions kafka)
     {
-        _mqttOptions = mqttOptions;
-        _kafkaOptions = kafkaOptions;
+        _mqtt = mqtt;
+        _kafka = kafka;
     }
 
     [HttpGet("config")]
@@ -24,19 +24,13 @@ public class ConfigController : ControllerBase
         {
             Mqtt = new
             {
-                Server = $"{_mqttOptions.TcpServer}:{_mqttOptions.TcpPort}",
-                _mqttOptions.ClientId,
-                WebSocketUrl = _mqttOptions.WebSocketUrl,
-                TopicTemplates = new[]
-                {
-                    "device/{deviceId}/telemetry",
-                    "device/{deviceId}/event/critical"
-                }
+                _mqtt.ClientId,
+                _mqtt.TcpServer,
+                _mqtt.TcpPort
             },
             Kafka = new
             {
-                _kafkaOptions.BootstrapServers,
-                _kafkaOptions.ClientId,
+                _kafka.BootstrapServers,
                 Topics = ReliabilityConfiguration.KafkaTopics.Values.Distinct().ToArray()
             }
         });

@@ -8,10 +8,10 @@ namespace BackendProcessor.Controllers;
 [Route("api/v2/devices")]
 public sealed class QueriesController : ControllerBase
 {
-    private readonly ConnectionMultiplexer _redis;
+    private readonly IConnectionMultiplexer _redis;
     private readonly NpgsqlDataSource _pg;
 
-    public QueriesController(ConnectionMultiplexer redis, NpgsqlDataSource pg)
+    public QueriesController(IConnectionMultiplexer redis, NpgsqlDataSource pg)
     {
         _redis = redis;
         _pg = pg;
@@ -42,23 +42,21 @@ public sealed class QueriesController : ControllerBase
         var offset = (Math.Max(page, 1) - 1) * pageSize;
         var order = sort?.ToLowerInvariant() == "asc" ? "ASC" : "DESC";
 
-        await using var conn = _pg.CreateConnection();
-        await conn.OpenAsync();
+        await using var conn = await _pg.OpenConnectionAsync();
 
-        await using var countCmd = conn.CreateCommand();
-        countCmd.CommandText = "SELECT COUNT(*) FROM telemetry_records WHERE device_id = $1";
+        await using var countCmd = new NpgsqlCommand(
+            "SELECT COUNT(*) FROM telemetry_records WHERE device_id = $1", conn);
         countCmd.Parameters.AddWithValue(deviceId);
         var totalCount = (long)(await countCmd.ExecuteScalarAsync())!;
 
-        await using var dataCmd = conn.CreateCommand();
-        dataCmd.CommandText = $"""
+        await using var dataCmd = new NpgsqlCommand($"""
             SELECT event_id, device_id, sequence, metric_type, payload_json,
                    recorded_at, received_at, schema_version, reliability
             FROM telemetry_records
             WHERE device_id = $1
             ORDER BY recorded_at {order}
             LIMIT $2 OFFSET $3
-            """;
+            """, conn);
         dataCmd.Parameters.AddWithValue(deviceId);
         dataCmd.Parameters.AddWithValue(pageSize);
         dataCmd.Parameters.AddWithValue(offset);
@@ -80,16 +78,6 @@ public sealed class QueriesController : ControllerBase
             totalCount,
             hasNextPage = offset + pageSize < totalCount,
             data = results
-        });
-    }
-
-    [HttpGet("{deviceId}/timeseries")]
-    public IActionResult GetTimeseries(string deviceId)
-    {
-        return StatusCode(501, new
-        {
-            error = "not_implemented",
-            detail = "Timeseries endpoint requires TimescaleDB extension. Set TimeseriesProjection:Enabled=true once configured."
         });
     }
 }

@@ -3,5 +3,7 @@
   <Project Path="DeviceSimulator/DeviceSimulator.csproj" />
   <Project Path="IoTGateway/IoTGateway.csproj" />
   <Project Path="IoTHunter.Infrastructure/IoTHunter.Infrastructure.csproj" />
+  <Project Path="IoTHunter.Management/IoTHunter.Management.csproj" />
   <Project Path="IoTHunter.Shared/IoTHunter.Shared.csproj" />
+  <Project Path="IoTHunter.WebUI/IoTHunter.WebUI.csproj" />
 </Solution>

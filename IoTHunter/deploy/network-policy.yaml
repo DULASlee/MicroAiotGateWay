@@ -1,0 +1,379 @@
+---
+# Default deny all ingress and egress (zero-trust baseline)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: iothunter
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+# Allow Gateway egress to Kafka and Mosquitto
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-egress
+  namespace: iothunter
+spec:
+  podSelector:
+    matchLabels:
+      app: iot-gateway
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: kafka
+    ports:
+    - protocol: TCP
+      port: 9092
+  - to:
+    - podSelector:
+        matchLabels:
+          app: mosquitto
+    ports:
+    - protocol: TCP
+      port: 1883
+    - protocol: TCP
+      port: 8083
+  - to:  # DNS
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+---
+# Allow Processor egress to Kafka, PostgreSQL, Redis
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-processor-egress
+  namespace: iothunter
+spec:
+  podSelector:
+    matchLabels:
+      app: backend-processor
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: kafka
+    ports:
+    - protocol: TCP
+      port: 9092
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to:  # DNS
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+---
+# Allow Simulator egress to Gateway and Mosquitto
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-simulator-egress
+  namespace: iothunter
+spec:
+  podSelector:
+    matchLabels:
+      app: device-simulator
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: iot-gateway
+    ports:
+    - protocol: TCP
+      port: 80
+  - to:
+    - podSelector:
+        matchLabels:
+          app: mosquitto
+    ports:
+    - protocol: TCP
+      port: 1883
+    - protocol: TCP
+      port: 8083
+  - to:  # DNS
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+---
+# Ingress: allow inbound to IoTGateway from Simulator, Prometheus, Management
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-ingress
+  namespace: iothunter
+spec:
+  podSelector:
+    matchLabels:
+      app: iot-gateway
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: device-simulator
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 9464
+  - from:
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 9464
+  - from:
+    - podSelector:
+        matchLabels:
+          app: iothunter-management
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 9464
+---
+# Ingress: allow inbound to BackendProcessor from Simulator, Prometheus, WebUI
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-processor-ingress
+  namespace: iothunter
+spec:
+  podSelector:
+    matchLabels:
+      app: backend-processor
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: device-simulator
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 9464
+  - from:
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 9464
+  - from:
+    - podSelector:
+        matchLabels:
+          app: iothunter-webui
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 9464
+---
+# Ingress: allow app pods to reach middleware (kafka, postgres, redis, mosquitto)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-middleware-ingress
+  namespace: iothunter
+spec:
+  podSelector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values:
+      - kafka
+      - postgres
+      - redis
+      - mosquitto
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchExpressions:
+        - key: app
+          operator: In
+          values:
+          - iot-gateway
+          - backend-processor
+          - device-simulator
+    ports:
+    - protocol: TCP
+      port: 9092
+    - protocol: TCP
+      port: 5432
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 1883
+    - protocol: TCP
+      port: 8083
+---
+# WebUI egress to Management, BackendProcessor, DeviceSimulator
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-webui-egress
+  namespace: iothunter
+spec:
+  podSelector:
+    matchLabels:
+      app: iothunter-webui
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: iothunter-management
+    ports:
+    - protocol: TCP
+      port: 80
+  - to:
+    - podSelector:
+        matchLabels:
+          app: backend-processor
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 9464
+  - to:
+    - podSelector:
+        matchLabels:
+          app: device-simulator
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 9464
+  - to:  # DNS
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+---
+# Management ingress from WebUI only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-webui-to-management
+  namespace: iothunter
+spec:
+  podSelector:
+    matchLabels:
+      app: iothunter-management
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: iothunter-webui
+    ports:
+    - protocol: TCP
+      port: 80
+---
+# BackendProcessor + DeviceSimulator ingress from WebUI
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-webui-to-backends
+  namespace: iothunter
+spec:
+  podSelector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values:
+      - backend-processor
+      - device-simulator
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: iothunter-webui
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 9464
+---
+# Management egress to IoTGateway
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-management-egress-to-gateway
+  namespace: iothunter
+spec:
+  podSelector:
+    matchLabels:
+      app: iothunter-management
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: iot-gateway
+    ports:
+    - protocol: TCP
+      port: 80
+  - to:  # DNS
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53

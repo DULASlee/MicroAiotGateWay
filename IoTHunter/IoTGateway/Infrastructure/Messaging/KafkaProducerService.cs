@@ -7,8 +7,8 @@ using IoTHunter.Shared.Infrastructure;
 using IoTGateway.Infrastructure.Options;
 using IoTGateway.Infrastructure.Resilience;
 using OpenTelemetry;
-using OpenTelemetry.Context.Propagation;
 using Polly;
+using OpenTelemetry.Context.Propagation;
 
 namespace IoTGateway.Infrastructure.Messaging;
 
@@ -67,6 +67,8 @@ public sealed class KafkaProducerService : IDisposable
         message.Headers.Add("schema_version", Encoding.UTF8.GetBytes(envelope.SchemaVersion.ToString()));
         message.Headers.Add("reliability_level", Encoding.UTF8.GetBytes(((int)envelope.ReliabilityLevel).ToString()));
 
+        activity?.SetTag("deviceId", envelope.DeviceId);
+
         var stopwatch = Stopwatch.StartNew();
         try
         {
@@ -74,7 +76,6 @@ public sealed class KafkaProducerService : IDisposable
                 async innerCt => await _producer.ProduceAsync(topic, message, innerCt), ct);
 
             stopwatch.Stop();
-            activity?.SetTag("deviceId", envelope.DeviceId);
             activity?.SetTag("messaging.system", "kafka");
             activity?.SetTag("messaging.destination", topic);
             activity?.SetTag("messaging.kafka.partition", result.Partition.Value);
